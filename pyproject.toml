@@ -1,0 +1,32 @@
+[project]
+name = "observation-kernel"
+version = "0.1.0"
+description = "A small multi-agent observation kernel: LLM artists coin artwork concepts, LLM critics evaluate them, and we study whether a coined aesthetic descriptor propagates across critics over rounds."
+requires-python = ">=3.12"
+
+# Runtime dependencies for the kernel itself (run.py).
+dependencies = [
+    "anthropic>=0.40",   # official SDK; we use AsyncAnthropic
+    "pydantic>=2.0",     # structured + validated agent responses
+    "python-dotenv>=1.0", # load ANTHROPIC_API_KEY from .env
+    "pyyaml>=6.0",       # read agents.yaml
+]
+
+[project.optional-dependencies]
+# Analysis-only dependencies (analyze.py). Kept separate so a bare run
+# doesn't pull in the heavy NLP stack.
+analysis = [
+    "pandas>=2.0",
+    "spacy>=3.7",                 # noun-phrase (descriptor) extraction
+    "sentence-transformers>=3.0", # semantic similarity for propagation
+    "plotly>=5.0",                # visualization
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# This is a flat scaffold (scripts + modules at the repo root), not a package.
+# Tell hatch there's nothing to package so `uv sync` doesn't error.
+bypass-selection = true
