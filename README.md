@@ -56,15 +56,15 @@ cp .env.example .env   # then edit .env and set ANTHROPIC_API_KEY
 ## Run
 
 ```sh
-# A run (writes logs/run_<timestamp>.jsonl).
+# One command does everything: the run (logs/run_<timestamp>.jsonl), then
+# automatically the analysis (figures/) and the archive page (site/index.html).
 uv run python run.py --rounds 4
 
-# Analyze the newest run (writes figures/analysis_<timestamp>.html).
-uv run python analyze.py
-# or point at a specific log:
-uv run python analyze.py logs/run_20260609_120000.jsonl
+# Skip the automatic post-processing:
+uv run python run.py --rounds 4 --no-analyze
 
-# Regenerate the run archive page (open site/index.html in a browser).
+# The steps also work standalone, e.g. to re-analyze an old run:
+uv run python analyze.py logs/run_20260609_120000.jsonl
 uv run python report.py
 ```
 
@@ -75,7 +75,6 @@ tiny end-to-end check is:
 
 ```sh
 uv run python run.py --rounds 2
-uv run python analyze.py
 ```
 
 This is ~12 Claude calls. Once it works, write real dispositions and scale up

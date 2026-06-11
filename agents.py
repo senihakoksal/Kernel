@@ -11,6 +11,7 @@ import re
 from typing import Optional
 
 from anthropic import AsyncAnthropic
+from pydantic import ValidationError
 
 from schema import ModelOutput, Record
 
@@ -33,6 +34,7 @@ Always reply with a single JSON object and nothing else. Use these keys:
   - "reasoning": one or two sentences on why, as a string.
   - "score":     critics only — a number from 0.0 to 1.0 rating the concept(s). Omit if you are an artist.
 
+Keep "content" under 200 words — concepts and critiques alike are short by design.
 Do not wrap the JSON in markdown fences. Do not add commentary outside the JSON.
 """
 
@@ -116,21 +118,46 @@ class Agent:
         already includes this round's concepts). `target` is the single concept
         a critic must evaluate; None for artists.
         """
-        system_prompt = f"{SHARED_SYSTEM_PROMPT}\nYour disposition: {self.disposition}"
-        user_prompt = (
-            "Studio so far:\n"
-            f"{format_feed(feed)}\n\n"
+        # Prompt layout is built for cache reuse: the shared system prompt and
+        # the feed are identical for every agent in a phase, so both are marked
+        # as cache breakpoints; only the small final block (disposition + task)
+        # differs per agent. Cache reads cost ~10% and crucially do NOT count
+        # toward the input-tokens-per-minute rate limit — without this, the
+        # growing feed re-billed in full per call kills long runs with 429s.
+        # (This is why the disposition sits in the user message, after the
+        # feed, instead of in the system prompt: any per-agent text before the
+        # feed would break the shared cache prefix.)
+        feed_block = f"Studio so far:\n{format_feed(feed)}"
+        agent_block = (
+            f"Your disposition: {self.disposition}\n\n"
             f"{self._task_instruction(target)}"
         )
 
-        response = await self.client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        text = "".join(block.text for block in response.content if block.type == "text")
-        output = ModelOutput.model_validate(_extract_json(text))
+        # max_tokens is kept modest: content is capped at ~200 words by the
+        # system prompt, and the API's output-tokens-per-minute bucket counts
+        # this cap, not actual usage. A response that still overruns it gets
+        # truncated mid-JSON and fails to parse — so retry a couple of times
+        # rather than let one bad response kill a long run.
+        output: Optional[ModelOutput] = None
+        for attempt in range(3):
+            response = await self.client.messages.create(
+                model=MODEL,
+                max_tokens=800,
+                system=[{"type": "text", "text": SHARED_SYSTEM_PROMPT,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": feed_block,
+                     "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": agent_block},
+                ]}],
+            )
+            text = "".join(block.text for block in response.content if block.type == "text")
+            try:
+                output = ModelOutput.model_validate(_extract_json(text))
+                break
+            except (ValueError, ValidationError):
+                if attempt == 2:
+                    raise
 
         # Concepts get a fresh id; an evaluation carries its target's id so
         # every critique is linked to the work it judges.
