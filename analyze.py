@@ -3,14 +3,19 @@ critics' scores converge or split?
 
 Pipeline:
   1. Read a run's .jsonl into a DataFrame.
-  2. Extract descriptors (noun phrases) from each critic evaluation with spaCy.
-  3. Canonicalize descriptors into clusters by exact match + embedding similarity
-     (sentence-transformers), so "ghostly light" and "spectral glow" can count
-     as the same descriptor.
-  4. A descriptor "propagated" if, after first appearing in one critic's writing,
-     it (or a semantically-similar variant) later appears in a DIFFERENT critic's
-     writing. Output a plotly figure of propagation over rounds + per-critic
-     score trajectories.
+  2. Extract descriptors (adjective-bearing noun phrases) from each critic
+     evaluation with spaCy.
+  3. Subtract the prior vocabulary: any descriptor already present in the
+     shared system prompt or an agent's disposition (exact or
+     embedding-similar) is removed from the candidate pool — this encodes
+     "present in no starting prompt".
+  4. Canonicalize the survivors into clusters by exact match + embedding
+     similarity (sentence-transformers), so "ghostly light" and "spectral
+     glow" can count as the same descriptor.
+  5. A descriptor "propagated" if, after first appearing in one critic's
+     writing, it (or a semantically-similar variant) later appears in a
+     DIFFERENT critic's writing. Output a plotly figure of propagation over
+     rounds + per-critic score trajectories.
 
 Usage:
     uv run python analyze.py                 # newest run in logs/
@@ -25,16 +30,26 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import spacy
+import yaml
 from plotly.subplots import make_subplots
 from sentence_transformers import SentenceTransformer
+
+from agents import SHARED_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
 # Similarity threshold for treating two descriptors as "the same" idea.
 # This is the key knob for the propagation metric — TUNE THIS.
 # Higher = stricter (only near-identical phrases match); lower = looser.
 SIMILARITY_THRESHOLD = 0.72
+
+# Threshold for matching a candidate against the prior vocabulary (descriptors
+# seeded by the system prompt / dispositions). Candidates at or above this
+# similarity to any seed term are excluded — TUNE THIS independently if the
+# subtraction is too aggressive or too lax.
+PRIOR_VOCAB_THRESHOLD = 0.72
 # ---------------------------------------------------------------------------
 
+AGENTS_FILE = Path("agents.yaml")
 FIGURE_DIR = Path("figures")
 EMBED_MODEL = "all-MiniLM-L6-v2"
 SPACY_MODEL = "en_core_web_sm"
@@ -48,18 +63,60 @@ def load_records(path: Path) -> pd.DataFrame:
 def extract_descriptors(text: str, nlp) -> list[str]:
     """Extract candidate aesthetic descriptors (noun phrases) from text.
 
-    We take spaCy noun chunks, drop leading determiners, lowercase, and keep
-    only multi-character non-stopword phrases.
+    Only noun phrases containing at least one adjective qualify ("spectral
+    glow", "brutal flatness"): a bare common-noun phrase ("the piece",
+    "score") is studio shop talk, and a lone adjective carries little meaning
+    outside its phrase — both are dropped.
     """
     doc = nlp(text)
     descriptors: list[str] = []
     for chunk in doc.noun_chunks:
         # Drop leading determiners/pronouns ("a haunting glow" -> "haunting glow").
         tokens = [t for t in chunk if t.pos_ not in ("DET", "PRON")]
+        if not any(t.pos_ == "ADJ" for t in tokens):
+            continue
         phrase = " ".join(t.text for t in tokens).strip().lower()
         if len(phrase) >= 3 and not all(t.is_stop for t in tokens):
             descriptors.append(phrase)
     return descriptors
+
+
+def prior_vocabulary(nlp) -> list[str]:
+    """Every descriptor seeded by the starting prompts.
+
+    Runs the same extractor over the shared system prompt and each agent's
+    disposition. NOTE: reads the *current* agents.py / agents.yaml — run logs
+    don't store the prompts they were generated with, so re-analyzing an old
+    run after editing prompts will subtract the new vocabulary, not the old.
+    """
+    texts = [SHARED_SYSTEM_PROMPT]
+    spec = yaml.safe_load(AGENTS_FILE.read_text())
+    texts += [a["disposition"] for a in spec["agents"]]
+    seeds: set[str] = set()
+    for text in texts:
+        seeds.update(extract_descriptors(text, nlp))
+    return sorted(seeds)
+
+
+def subtract_prior_vocabulary(occ: pd.DataFrame, seeds: list[str],
+                              model: SentenceTransformer,
+                              threshold: float) -> pd.DataFrame:
+    """Drop candidates already present in the starting prompts.
+
+    This encodes the research question's "present in no starting prompt": a
+    candidate is removed if it exactly matches a seed descriptor or sits at or
+    above `threshold` cosine similarity to any of them.
+    """
+    if not seeds or occ.empty:
+        return occ
+    uniq = sorted(set(occ["descriptor"]))
+    seed_emb = model.encode(seeds, normalize_embeddings=True)
+    cand_emb = model.encode(uniq, normalize_embeddings=True)
+    sims = cand_emb @ seed_emb.T  # cosine similarity, candidates x seeds
+    seed_set = set(seeds)
+    seeded = {d for d, row in zip(uniq, sims)
+              if d in seed_set or float(row.max()) >= threshold}
+    return occ[~occ["descriptor"].isin(seeded)].copy()
 
 
 def canonicalize(descriptors: list[str], model: SentenceTransformer,
@@ -232,18 +289,29 @@ def main() -> None:
     if occ.empty:
         sys.exit("No descriptors extracted from critic evaluations.")
 
-    # 2) cluster descriptors (exact + embedding similarity), then label each row
+    # 2) subtract the prior vocabulary — only descriptors present in NO
+    #    starting prompt can count as coined
+    seeds = prior_vocabulary(nlp)
+    n_before = occ["descriptor"].nunique()
+    occ = subtract_prior_vocabulary(occ, seeds, embed_model, PRIOR_VOCAB_THRESHOLD)
+    n_subtracted = n_before - occ["descriptor"].nunique()
+    print(f"  prior vocabulary: {len(seeds)} seed descriptors; "
+          f"subtracted {n_subtracted} of {n_before} candidates")
+    if occ.empty:
+        sys.exit("All descriptors were already in the starting prompts.")
+
+    # 3) cluster the survivors (exact + embedding similarity), label each row
     assignment = canonicalize(occ["descriptor"].tolist(), embed_model, SIMILARITY_THRESHOLD)
     occ["cluster"] = occ["descriptor"].map(assignment)
 
-    # 3) propagation + scores
+    # 4) propagation + scores
     propagation_df, propagated_labels = find_propagation(occ)
     scores_df = score_trajectories(critic_evals)
 
     print(f"  {occ['cluster'].nunique()} descriptor clusters; "
           f"{len(propagated_labels)} propagated across critics: {propagated_labels}")
 
-    # 4) outputs, keyed by run id so report.py can attach them to the run:
+    # 5) outputs, keyed by run id so report.py can attach them to the run:
     #    the figure, plus a small JSON summary of what propagated.
     FIGURE_DIR.mkdir(exist_ok=True)
     fig = make_figure(propagation_df, scores_df, propagated_labels)
@@ -254,6 +322,8 @@ def main() -> None:
         "n_clusters": int(occ["cluster"].nunique()),
         "propagated": propagated_labels,
         "threshold": SIMILARITY_THRESHOLD,
+        "prior_vocab_size": len(seeds),
+        "prior_vocab_subtracted": int(n_subtracted),
         "convergence": convergence_summary(scores_df),
     }
     summary_path = FIGURE_DIR / f"analysis_{log_path.stem}.json"

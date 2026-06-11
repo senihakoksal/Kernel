@@ -91,8 +91,9 @@ PAGE = """<!DOCTYPE html>
   .when { color: var(--soft); font-size: .85rem; margin-bottom: 1.6rem; }
 
   /* Stat cards: big old-style serif numerals over hairlines. */
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-           column-gap: 3rem; margin: 1.5rem 0 2.5rem; }
+  /* One row always: each stat gets an equal column, however many there are. */
+  .stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+           column-gap: 2rem; margin: 1.5rem 0 2.5rem; }
   .stat { border-bottom: 1px solid var(--hairline); padding: 1.1rem 0 1.3rem; }
   .stat .num { font-family: var(--serif); font-size: 3.2rem; font-weight: 400;
                line-height: 1.05; font-variant-numeric: oldstyle-nums; }
@@ -157,7 +158,8 @@ PAGE = """<!DOCTYPE html>
   <table>
     <thead><tr><th class="label">started</th><th class="label">rounds</th>
                <th class="label">works</th><th class="label">critiques</th>
-               <th class="label">agents</th><th class="label">report</th></tr></thead>
+               <th class="label">artists</th><th class="label">critics</th>
+               <th class="label">report</th></tr></thead>
     <tbody id="run-list"></tbody>
   </table>
 </div>
@@ -181,7 +183,8 @@ function counts(run) {
     concepts: run.records.filter(r => r.kind === "concept").length,
     evals: run.records.filter(r => r.kind === "evaluation").length,
     rounds: new Set(run.records.map(r => r.round)).size,
-    agents: new Set(run.records.map(r => r.agent)).size,
+    artists: new Set(run.records.filter(r => r.role === "artist").map(r => r.agent)).size,
+    critics: new Set(run.records.filter(r => r.role === "critic").map(r => r.agent)).size,
   };
 }
 
@@ -208,7 +211,8 @@ function showRun(i) {
                ${stat(c.rounds, "rounds", "completed")}
                ${stat(c.concepts, "works generated", "this run")}
                ${stat(c.evals, "critiques published", "this run")}
-               ${stat(c.agents, "active agents", "artists + critics")}
+               ${stat(c.artists, "artists", "active")}
+               ${stat(c.critics, "critics", "active")}
              </div>`;
 
   // Report section: this run's analysis, if analyze.py has been run on it.
@@ -222,6 +226,11 @@ function showRun(i) {
     let findings = `${a.propagated.length} of ${a.n_clusters} descriptor clusters
       coined by one critic later appeared in a different critic's writing
       (similarity threshold ${a.threshold}).`;
+    if (a.prior_vocab_size != null) {
+      findings += ` Descriptors already present in the starting prompts were
+        excluded first: ${a.prior_vocab_subtracted} candidates matched the
+        ${a.prior_vocab_size} seeded terms and were removed.`;
+    }
     if (a.convergence) {
       findings += ` Critics' judgments were <span class="verdict">${esc(a.convergence.verdict)}</span>:
         the score spread across critics went from ${a.convergence.first_spread}
@@ -270,7 +279,8 @@ document.getElementById("overview").innerHTML =
   stat(RUNS.length, "runs", "archived") +
   stat(totals.reduce((s, c) => s + c.concepts, 0), "works generated", "all runs") +
   stat(totals.reduce((s, c) => s + c.evals, 0), "critiques published", "all runs") +
-  stat(RUNS.length ? totals[0].agents : 0, "active agents", "latest run");
+  stat(RUNS.length ? totals[0].artists : 0, "artists", "latest run") +
+  stat(RUNS.length ? totals[0].critics : 0, "critics", "latest run");
 
 const tbody = document.getElementById("run-list");
 RUNS.forEach((run, i) => {
@@ -278,7 +288,8 @@ RUNS.forEach((run, i) => {
   const tr = document.createElement("tr");
   tr.className = "run-row";
   tr.innerHTML = `<td class="run-date">${esc(run.started)}</td><td>${c.rounds}</td>
-                  <td>${c.concepts}</td><td>${c.evals}</td><td>${c.agents}</td>
+                  <td>${c.concepts}</td><td>${c.evals}</td>
+                  <td>${c.artists}</td><td>${c.critics}</td>
                   <td>${run.analysis ? "analyzed" : "&mdash;"}</td>`;
   tr.onclick = () => showRun(i);
   tbody.appendChild(tr);
