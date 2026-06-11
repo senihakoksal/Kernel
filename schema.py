@@ -20,11 +20,12 @@ Kind = Literal["concept", "evaluation"]
 class ModelOutput(BaseModel):
     """What Claude returns for one action, as a small JSON object.
 
-    Artists return `content` (the artwork *concept*) + `reasoning`.
-    Critics additionally return `score`. We keep `score` optional so the same
-    model validates both roles; run.py is responsible for the role contract.
+    Artists return `title` + `content` (the artwork *concept*) + `reasoning`.
+    Critics return `content` + `reasoning` + `score`. Role-specific fields are
+    optional so the same model validates both roles; run.py owns the contract.
     """
 
+    title: Optional[str] = None
     content: str
     reasoning: str
     score: Optional[float] = None
@@ -38,8 +39,11 @@ class Record(BaseModel):
     role: Role
     model: str
     kind: Kind
-    # Set only on concepts (kind == "concept"); None on evaluations.
+    # On concepts: this concept's own id. On evaluations: the id of the
+    # concept being evaluated (each critique targets exactly one concept).
     concept_id: Optional[str] = None
+    # Short artwork title; concepts only.
+    title: Optional[str] = None
     content: str
     # Set only by critics; None on concepts.
     score: Optional[float] = None

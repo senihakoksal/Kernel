@@ -28,6 +28,7 @@ language. Artists invent short *concepts* for artworks — vivid text prompts,
 never images. Critics evaluate those concepts in writing.
 
 Always reply with a single JSON object and nothing else. Use these keys:
+  - "title":     artists only — a short title for the artwork, at most six words. Omit if you are a critic.
   - "content":   your contribution as a string (an artwork concept, or an evaluation).
   - "reasoning": one or two sentences on why, as a string.
   - "score":     critics only — a number from 0.0 to 1.0 rating the concept(s). Omit if you are an artist.
@@ -49,18 +50,12 @@ def format_feed(feed: list[Record]) -> str:
     lines: list[str] = []
     for r in feed:
         if r.kind == "concept":
-            lines.append(f"[round {r.round}] ARTIST {r.agent} proposed a concept:\n  {r.content}")
+            title = f" “{r.title}”" if r.title else " a concept"
+            lines.append(f"[round {r.round}] ARTIST {r.agent} proposed{title}:\n  {r.content}")
         else:  # evaluation
             score = "n/a" if r.score is None else f"{r.score:.2f}"
-            lines.append(f"[round {r.round}] CRITIC {r.agent} (score {score}) wrote:\n  {r.content}")
-    return "\n".join(lines)
-
-
-def _format_new_concepts(new_concepts: list[Record]) -> str:
-    """Render this round's concepts that a critic must evaluate now."""
-    lines = []
-    for r in new_concepts:
-        lines.append(f"- (by {r.agent}) {r.content}")
+            lines.append(f"[round {r.round}] CRITIC {r.agent} on {r.concept_id} "
+                         f"(score {score}) wrote:\n  {r.content}")
     return "\n".join(lines)
 
 
@@ -93,20 +88,19 @@ class Agent:
         self.disposition = disposition
         self.client = client
 
-    def _task_instruction(self, new_concepts: list[Record]) -> str:
+    def _task_instruction(self, target: Optional[Record]) -> str:
         """The role-specific ask, appended to the user prompt after the feed."""
         if self.role == "artist":
             return (
-                "Your turn: invent ONE new artwork concept. Make it specific and "
-                "evocative. Return your JSON object."
+                "Your turn: invent ONE new artwork concept with a short title. "
+                "Make it specific and evocative. Return your JSON object."
             )
         # critic
         return (
-            "Your turn: evaluate the concept(s) proposed THIS round, in light of "
-            "the studio's history above. Write a short critique in 'content', give "
-            "a 'score' from 0.0 to 1.0, and a 'reasoning'.\n\n"
-            "Concepts to evaluate this round:\n"
-            f"{_format_new_concepts(new_concepts)}\n\n"
+            "Your turn: evaluate ONE concept proposed this round, in light of "
+            "the studio's history above. Write a short critique in 'content', "
+            "give a 'score' from 0.0 to 1.0, and a 'reasoning'.\n\n"
+            f"The concept to evaluate (by {target.agent}):\n{target.content}\n\n"
             "Return your JSON object."
         )
 
@@ -114,19 +108,19 @@ class Agent:
         self,
         round_idx: int,
         feed: list[Record],
-        new_concepts: list[Record],
+        target: Optional[Record] = None,
     ) -> Record:
         """Build the prompt, call Claude, parse the JSON, return a Record.
 
-        `feed` is the full history before this agent acts. `new_concepts` is this
-        round's concepts (passed to critics so they can evaluate them; empty for
-        artists).
+        `feed` is the full history before this agent acts (for critics it
+        already includes this round's concepts). `target` is the single concept
+        a critic must evaluate; None for artists.
         """
         system_prompt = f"{SHARED_SYSTEM_PROMPT}\nYour disposition: {self.disposition}"
         user_prompt = (
             "Studio so far:\n"
             f"{format_feed(feed)}\n\n"
-            f"{self._task_instruction(new_concepts)}"
+            f"{self._task_instruction(target)}"
         )
 
         response = await self.client.messages.create(
@@ -138,9 +132,11 @@ class Agent:
         text = "".join(block.text for block in response.content if block.type == "text")
         output = ModelOutput.model_validate(_extract_json(text))
 
-        # Concepts get an id (so critics/analysis can reference them); evals don't.
+        # Concepts get a fresh id; an evaluation carries its target's id so
+        # every critique is linked to the work it judges.
         concept_id: Optional[str] = (
-            f"r{round_idx}-{self.name}" if self.role == "artist" else None
+            f"r{round_idx}-{self.name}" if self.role == "artist"
+            else target.concept_id
         )
         return Record(
             round=round_idx,
@@ -149,6 +145,7 @@ class Agent:
             model=MODEL,
             kind="concept" if self.role == "artist" else "evaluation",
             concept_id=concept_id,
+            title=output.title if self.role == "artist" else None,
             content=output.content,
             score=output.score if self.role == "critic" else None,
             reasoning=output.reasoning,

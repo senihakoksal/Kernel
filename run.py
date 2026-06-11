@@ -63,14 +63,16 @@ async def run(rounds: int) -> Path:
     for round_idx in range(rounds):
         # 1) Artists each invent one concept, in parallel. They see the feed.
         new_concepts = await asyncio.gather(
-            *(a.act(round_idx, feed, []) for a in artists)
+            *(a.act(round_idx, feed) for a in artists)
         )
         append_records(list(new_concepts), feed, log_path)
 
-        # 2) Critics evaluate this round's concepts, in parallel. They see the
-        #    prior feed plus this round's concepts (passed explicitly).
+        # 2) Each critic writes one critique per concept — every
+        #    (critic, concept) pair, all in parallel. The feed already
+        #    includes this round's concepts, so critics have full context.
         evaluations = await asyncio.gather(
-            *(c.act(round_idx, feed, list(new_concepts)) for c in critics)
+            *(c.act(round_idx, feed, concept)
+              for c in critics for concept in new_concepts)
         )
         append_records(list(evaluations), feed, log_path)
 

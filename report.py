@@ -136,6 +136,10 @@ PAGE = """<!DOCTYPE html>
   .who { font-family: var(--serif); font-size: 1.2rem; }
   .role-tag { color: var(--muted); font-size: .72rem; letter-spacing: .14em;
               text-transform: uppercase; margin-left: .5rem; }
+  .target { color: var(--soft); font-size: .82rem; margin-top: .15rem; }
+  .target .artist { color: var(--accent); }
+  .work-title { font-family: var(--serif); font-size: 1.45rem; font-style: italic;
+                margin-top: .3rem; }
   .score { float: right; font-family: var(--serif); font-size: 1.5rem;
            color: var(--accent); font-variant-numeric: oldstyle-nums; }
   .content { margin-top: .45rem; }
@@ -204,6 +208,11 @@ function showRun(i) {
   const rounds = {};
   for (const r of run.records) (rounds[r.round] ??= []).push(r);
 
+  // Concepts by id, so each critique can name the artist and work it judges.
+  const conceptsById = {};
+  for (const r of run.records)
+    if (r.kind === "concept" && r.concept_id) conceptsById[r.concept_id] = r;
+
   let out = `<div class="label"><span class="dot"></span>Run</div>
              <h2>${esc(run.id)}</h2>
              <div class="when">started ${esc(run.started)}</div>
@@ -261,8 +270,20 @@ function showRun(i) {
     out += `<div class="round-label label">Round ${idx}</div>`;
     for (const r of rounds[idx]) {
       const score = r.score != null ? `<span class="score">${r.score.toFixed(2)}</span>` : "";
+      // For critiques, name the artist and quote the start of the work judged.
+      let target = "";
+      const work = r.kind === "evaluation" && r.concept_id && conceptsById[r.concept_id];
+      if (work) {
+        // Prefer the work's title; fall back to an excerpt for old runs.
+        const named = work.title ? esc(work.title)
+          : esc(work.content.slice(0, 110)) + (work.content.length > 110 ? "&hellip;" : "");
+        target = `<div class="target">critique of <span class="artist">${esc(work.agent)}</span>'s
+                  &ldquo;${named}&rdquo;</div>`;
+      }
+      const title = r.kind === "concept" && r.title
+        ? `<div class="work-title">${esc(r.title)}</div>` : "";
       out += `<div class="card ${r.kind}">${score}<span class="who">${esc(r.agent)}</span>
-              <span class="role-tag">${r.role}</span>
+              <span class="role-tag">${r.role}</span>${title}${target}
               <div class="content">${esc(r.content)}</div>
               <div class="reasoning">${esc(r.reasoning)}</div></div>`;
     }
