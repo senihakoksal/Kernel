@@ -14,8 +14,10 @@ Pipeline:
      glow" can count as the same descriptor.
   5. A descriptor "propagated" if, after first appearing in one critic's
      writing, it (or a semantically-similar variant) later appears in a
-     DIFFERENT critic's writing. Output a plotly figure of propagation over
-     rounds + per-critic score trajectories.
+     DIFFERENT critic's writing.
+  6. Output a two-panel plotly figure: vocabulary convergence between critics
+     (avg pairwise Jaccard overlap of their descriptor sets per round) and
+     score spread between critics (std of their scores per round).
 
 Usage:
     uv run python analyze.py                 # newest run in logs/
@@ -223,45 +225,156 @@ def score_trajectories(critic_evals: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def make_figure(propagation_df: pd.DataFrame, scores_df: pd.DataFrame,
-                propagated_labels: list[str]) -> go.Figure:
-    """Two stacked panels: descriptor propagation, then score trajectories."""
+def vocabulary_convergence(occ: pd.DataFrame) -> pd.DataFrame:
+    """Average pairwise vocabulary overlap between critics, per round.
+
+    For each round, take each critic's set of descriptor clusters and compute
+    the Jaccard overlap |A∩B| / |A∪B| for every pair of critics, then average.
+    Rising overlap means critics are increasingly reaching for the same
+    descriptors — vocabulary convergence. Rounds with fewer than two critics
+    (no pair to compare) are skipped.
+    """
+    rows = []
+    for rnd, grp in occ.groupby("round"):
+        sets = {c: set(g["cluster"]) for c, g in grp.groupby("critic")}
+        critics = list(sets)
+        if len(critics) < 2:
+            continue
+        pair_jaccard = []
+        for i in range(len(critics)):
+            for j in range(i + 1, len(critics)):
+                a, b = sets[critics[i]], sets[critics[j]]
+                union = a | b
+                pair_jaccard.append(len(a & b) / len(union) if union else 0.0)
+        rows.append({"round": int(rnd), "jaccard": sum(pair_jaccard) / len(pair_jaccard)})
+    return pd.DataFrame(rows)
+
+
+def score_spread(scores_df: pd.DataFrame) -> pd.DataFrame:
+    """Spread of critics' judgments per round = std of the critics' mean scores.
+
+    Lower spread means the critics agree more closely on quality that round.
+    """
+    return (
+        scores_df.groupby("round")["mean_score"]
+        .std(ddof=0)
+        .reset_index(name="spread")
+        .dropna()
+    )
+
+
+def top_descriptor_usage(occ: pd.DataFrame, top_n: int = 10) -> tuple[pd.DataFrame, list[str]]:
+    """The most-used descriptor clusters and how many critics used each per round.
+
+    "Most-used" ranks clusters by total distinct-critic usage summed over all
+    rounds. Returns (usage_df with columns cluster/round/n_critics for the top
+    clusters, ordered top labels most-used first).
+    """
+    per = (occ.groupby(["cluster", "round"])["critic"]
+              .nunique().reset_index(name="n_critics"))
+    totals = per.groupby("cluster")["n_critics"].sum().sort_values(ascending=False)
+    top = totals.head(top_n).index.tolist()
+    return per[per["cluster"].isin(top)].copy(), top
+
+
+def _early_late(values: list[float]) -> tuple[float, float, float]:
+    """Mean of the first two and last two points, and the % change between them.
+
+    With ≤2 points it falls back to first vs. last so the annotation still works.
+    """
+    if len(values) >= 4:
+        early = sum(values[:2]) / 2
+        late = sum(values[-2:]) / 2
+    else:
+        early, late = values[0], values[-1]
+    pct = (late - early) / early * 100 if early else 0.0
+    return early, late, pct
+
+
+def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
+                usage_df: pd.DataFrame, top_labels: list[str]) -> go.Figure:
+    """Two convergence panels on top, a top-descriptor usage heatmap below.
+
+    Top-left: average pairwise Jaccard overlap of critics' descriptor sets per
+    round (rising = converging vocabulary), with dashed early/late reference
+    lines. Top-right: std of critics' scores per round (falling = agreeing more
+    on quality). Bottom: the 10 most-used descriptors × round, colored by how
+    many critics used each that round.
+    """
     fig = make_subplots(
-        rows=2, cols=1,
+        rows=2, cols=2,
+        row_heights=[0.45, 0.55],
+        vertical_spacing=0.16,
+        specs=[[{}, {}], [{"colspan": 2}, None]],
         subplot_titles=(
-            "Descriptor propagation (distinct critics using a descriptor, per round)",
-            "Per-critic score trajectories",
+            "Vocabulary convergence between critics",
+            "Score spread between critics (lower = agreement)",
+            "Top 10 descriptors — how many critics used each, by round",
         ),
     )
 
-    # Panel 1: one line per propagated descriptor cluster.
-    if propagated_labels:
-        for label in propagated_labels:
-            sub = propagation_df[propagation_df["cluster"] == label].sort_values("round")
-            fig.add_trace(
-                go.Scatter(x=sub["round"], y=sub["n_critics"], mode="lines+markers",
-                           name=f"“{label}”"),
-                row=1, col=1,
-            )
-    else:
-        fig.add_annotation(text="No descriptor propagated across critics.",
-                           xref="x domain", yref="y domain", x=0.5, y=0.5,
-                           showarrow=False, row=1, col=1)
-    fig.update_yaxes(title_text="# critics", dtick=1, row=1, col=1)
+    # Left panel: vocabulary overlap as a percentage, with early/late lines.
+    vocab_df = vocab_df.sort_values("round")
+    overlap_pct = vocab_df["jaccard"] * 100
+    fig.add_trace(
+        go.Scatter(x=vocab_df["round"], y=overlap_pct, mode="lines+markers",
+                   line=dict(color="#3b4cb8", width=2.5), marker=dict(size=9),
+                   hovertemplate="round %{x}: %{y:.1f}%<extra></extra>",
+                   showlegend=False),
+        row=1, col=1,
+    )
+    if len(vocab_df) >= 2:
+        early, late, pct = _early_late(vocab_df["jaccard"].tolist())
+        fig.add_hline(y=early * 100, line_dash="dash", line_color="#9aa0a6", line_width=1,
+                      annotation_text=f"early avg {early * 100:.1f}%",
+                      annotation_position="bottom left",
+                      annotation_font=dict(color="#9aa0a6"), row=1, col=1)
+        fig.add_hline(y=late * 100, line_dash="dash", line_color="#9aa0a6", line_width=1,
+                      annotation_text=f"late avg {late * 100:.1f}% ({pct:+.0f}% relative)",
+                      annotation_position="top left",
+                      annotation_font=dict(color="#3b4cb8"), row=1, col=1)
+    fig.update_yaxes(title_text="avg pairwise overlap", ticksuffix="%",
+                     rangemode="tozero", row=1, col=1)
     fig.update_xaxes(title_text="round", row=1, col=1)
 
-    # Panel 2: one line per critic.
-    for critic, sub in scores_df.groupby("critic"):
-        sub = sub.sort_values("round")
+    # Right panel: score spread per round.
+    spread_df = spread_df.sort_values("round")
+    fig.add_trace(
+        go.Scatter(x=spread_df["round"], y=spread_df["spread"], mode="lines+markers",
+                   line=dict(color="#8a4b2f", width=2.5), marker=dict(size=9),
+                   showlegend=False),
+        row=1, col=2,
+    )
+    fig.update_yaxes(title_text="std of the critics' scores", rangemode="tozero",
+                     row=1, col=2)
+    fig.update_xaxes(title_text="round", row=1, col=2)
+
+    # Bottom panel: top-descriptor usage heatmap (descriptor × round → #critics).
+    if top_labels:
+        rounds = sorted(usage_df["round"].unique())
+        # Most-used at the top: reverse so the heatmap's first row sits highest.
+        labels = list(reversed(top_labels))
+        pivot = (usage_df.pivot(index="cluster", columns="round", values="n_critics")
+                         .reindex(index=labels, columns=rounds).fillna(0).astype(int))
+        # Truncate long phrases so the y-axis stays readable.
+        ticks = [f"“{l[:34]}{'…' if len(l) > 34 else ''}”" for l in labels]
         fig.add_trace(
-            go.Scatter(x=sub["round"], y=sub["mean_score"], mode="lines+markers",
-                       name=str(critic)),
+            go.Heatmap(z=pivot.values, x=[f"r{r}" for r in rounds], y=ticks,
+                       colorscale="Blues", zmin=0, text=pivot.values,
+                       texttemplate="%{text}", textfont=dict(size=11),
+                       colorbar=dict(title="# critics", len=0.45, y=0.22)),
             row=2, col=1,
         )
-    fig.update_yaxes(title_text="mean score", row=2, col=1)
+    else:
+        fig.add_annotation(text="No descriptors to rank.", xref="x domain",
+                           yref="y domain", x=0.5, y=0.5, showarrow=False,
+                           row=2, col=1)
     fig.update_xaxes(title_text="round", row=2, col=1)
 
-    fig.update_layout(height=800, title_text="Observation kernel — propagation & convergence")
+    fig.update_layout(height=900, plot_bgcolor="white",
+                      title_text="Observation kernel — convergence between critics")
+    fig.update_xaxes(showgrid=True, gridcolor="#eee", row=1)
+    fig.update_yaxes(showgrid=True, gridcolor="#eee", row=1)
     return fig
 
 
@@ -304,17 +417,28 @@ def main() -> None:
     assignment = canonicalize(occ["descriptor"].tolist(), embed_model, SIMILARITY_THRESHOLD)
     occ["cluster"] = occ["descriptor"].map(assignment)
 
-    # 4) propagation + scores
+    # 4) propagation, scores, and the two convergence metrics the figure plots
     propagation_df, propagated_labels = find_propagation(occ)
     scores_df = score_trajectories(critic_evals)
+    vocab_df = vocabulary_convergence(occ)
+    spread_df = score_spread(scores_df)
+    usage_df, top_labels = top_descriptor_usage(occ, top_n=10)
 
     print(f"  {occ['cluster'].nunique()} descriptor clusters; "
           f"{len(propagated_labels)} propagated across critics: {propagated_labels}")
 
+    # Vocabulary-convergence headline (early vs. late pairwise overlap).
+    vocab_trend = None
+    if len(vocab_df) >= 2:
+        early, late, pct = _early_late(vocab_df.sort_values("round")["jaccard"].tolist())
+        vocab_trend = {"early": round(early, 3), "late": round(late, 3),
+                       "pct_change": round(pct, 1)}
+        print(f"  vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
+
     # 5) outputs, keyed by run id so report.py can attach them to the run:
     #    the figure, plus a small JSON summary of what propagated.
     FIGURE_DIR.mkdir(exist_ok=True)
-    fig = make_figure(propagation_df, scores_df, propagated_labels)
+    fig = make_figure(vocab_df, spread_df, usage_df, top_labels)
     fig_path = FIGURE_DIR / f"analysis_{log_path.stem}.html"
     fig.write_html(fig_path)
     summary = {
@@ -325,6 +449,7 @@ def main() -> None:
         "prior_vocab_size": len(seeds),
         "prior_vocab_subtracted": int(n_subtracted),
         "convergence": convergence_summary(scores_df),
+        "vocab_trend": vocab_trend,
     }
     summary_path = FIGURE_DIR / f"analysis_{log_path.stem}.json"
     summary_path.write_text(json.dumps(summary, indent=2))

@@ -50,7 +50,13 @@ agents:
       and media-based works examining technology, communication, and cultural
       change. Combines humor, experimentation, and critical observation.
 
-  
+  - name: pablo_reyes
+    role: artist
+    disposition: >
+      A contemporary artist inspired by Pablo Picasso. Creates original work
+      that fractures and recombines perspective, treating a single subject from
+      several angles at once. Restlessly shifts approach, distorts familiar
+      forms, and favors bold structural invention over realism.
 
   - name: clara_bennett
     role: critic

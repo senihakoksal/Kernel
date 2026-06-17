@@ -114,6 +114,16 @@ PAGE = """<!DOCTYPE html>
   .report p { margin: .5rem 0 1.1rem; color: var(--soft); max-width: 46rem; }
   .report .verdict { color: var(--ink); font-family: var(--serif);
                      font-size: 1.15em; font-style: italic; }
+  ul.method { margin: .5rem 0 1.2rem; padding-left: 1.1rem; max-width: 46rem; }
+  ul.method li { color: var(--soft); margin: .35rem 0; padding-left: .2rem; }
+  ul.method strong { color: var(--ink); }
+  details.propagated { margin-top: 1.2rem; border-top: 1px solid var(--hairline);
+                       padding-top: .8rem; }
+  details.propagated summary { font-family: var(--sans); font-size: .68rem;
+                       font-weight: 600; letter-spacing: .18em; text-transform: uppercase;
+                       color: var(--muted); cursor: pointer; }
+  details.propagated summary:hover { color: var(--ink); }
+  details.propagated ul.themes { margin-top: .8rem; }
   ul.themes { list-style: none; padding: 0; margin: .5rem 0 1.2rem; columns: 2; }
   ul.themes li { padding: .22rem 0 .22rem 1.1rem; position: relative;
                  break-inside: avoid; color: var(--ink); }
@@ -247,19 +257,46 @@ function showRun(i) {
     } else {
       findings += ` Not enough scored critiques to assess convergence.`;
     }
+    if (a.vocab_trend) {
+      const early = (a.vocab_trend.early * 100).toFixed(1);
+      const late = (a.vocab_trend.late * 100).toFixed(1);
+      findings += ` Their shared vocabulary ${a.vocab_trend.pct_change >= 0 ? "grew" : "shrank"}:
+        average pairwise descriptor overlap moved from ${early}% to ${late}%
+        (${a.vocab_trend.pct_change >= 0 ? "+" : ""}${a.vocab_trend.pct_change}% relative)
+        between the first and last rounds.`;
+    }
 
     out += `<div class="report">
             <div class="label">What we're looking for</div>
             <p>Does a new aesthetic descriptor coined by one critic &mdash; present in no
             starting prompt &mdash; propagate to other critics over rounds, and do critics'
             judgments converge or split?</p>
+            <div class="label">How we measure it</div>
+            <ul class="method">
+              <li><strong>Extract descriptors.</strong> From each critic's writing, take the
+                adjective-bearing noun phrases (spaCy part-of-speech tags) &mdash; e.g.
+                &ldquo;spectral glow&rdquo; &mdash; as candidate aesthetic descriptors.</li>
+              <li><strong>Subtract the prior vocabulary.</strong> Remove any descriptor already
+                in the system prompt or an artist/critic disposition (exact match or embedding
+                similarity), so only language coined <em>during</em> the run can count.</li>
+              <li><strong>Cluster near-synonyms.</strong> Group descriptors by sentence-embedding
+                similarity (threshold ${a.threshold}) so paraphrases count as one descriptor.</li>
+              <li><strong>Propagation.</strong> A descriptor &ldquo;propagated&rdquo; if, after first
+                appearing in one critic's writing, it later appears in a <em>different</em>
+                critic's writing.</li>
+              <li><strong>Convergence.</strong> Vocabulary overlap = average pairwise Jaccard of
+                critics' descriptor sets per round; score spread = standard deviation of the
+                critics' scores per round.</li>
+            </ul>
             <div class="label">Findings</div>
             <p>${findings}</p>
-            <div class="label">Propagated descriptors</div>
-            ${themes}
             <div class="label">Figure</div>
             <p><a href="${esc(a.figure)}" target="_blank">open full figure &nearr;</a></p>
-            <iframe src="${esc(a.figure)}" loading="lazy"></iframe></div>`;
+            <iframe src="${esc(a.figure)}" loading="lazy"></iframe>
+            <details class="propagated">
+              <summary>Propagated descriptors (${a.propagated.length})</summary>
+              ${themes}
+            </details></div>`;
   } else {
     out += `<div class="report"><div class="label">Report</div>
             <p>Not analyzed yet. Run <code>uv run python analyze.py logs/${esc(run.id)}.jsonl</code>,
