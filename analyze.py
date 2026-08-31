@@ -22,8 +22,11 @@ Pipeline:
 Usage:
     uv run python analyze.py                 # newest run in logs/
     uv run python analyze.py logs/run_X.jsonl
+    # a treatment/control pair, clustered in ONE shared vocabulary space:
+    uv run python analyze.py --treatment logs/run_A.jsonl --control logs/control_A_B.jsonl
 """
 
+import argparse
 import json
 import sys
 from collections import Counter, defaultdict
@@ -184,7 +187,9 @@ def build_occurrences(critic_evals: pd.DataFrame, nlp) -> pd.DataFrame:
                 "critic": ev["agent"],
                 "descriptor": descriptor,
             })
-    return pd.DataFrame(rows)
+    # Explicit columns so an empty result still concatenates cleanly when
+    # several conditions are pooled.
+    return pd.DataFrame(rows, columns=["round", "critic", "descriptor"])
 
 
 def find_propagation(occ: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
@@ -311,8 +316,37 @@ def _early_late(values: list[float]) -> tuple[float, float, float]:
     return early, late, pct
 
 
+def usage_heatmap(usage_df: pd.DataFrame, top_labels: list[str],
+                  colorscale: str = "Blues", colorbar_y: float = 0.5,
+                  colorbar_len: float = 0.45):
+    """A descriptor × round heatmap of how many critics used each top descriptor.
+
+    Reused by both the per-run figure and the baseline/control comparison.
+    Returns a go.Heatmap (most-used descriptor on top), or None if there's
+    nothing to rank.
+    """
+    if not top_labels:
+        return None
+    rounds = sorted(usage_df["round"].unique())
+    labels = list(reversed(top_labels))  # reverse so most-used sits highest
+    pivot = (usage_df.pivot(index="cluster", columns="round", values="n_critics")
+                     .reindex(index=labels, columns=rounds).fillna(0).astype(int))
+    ticks = [f"“{l[:34]}{'…' if len(l) > 34 else ''}”" for l in labels]  # keep y readable
+    return go.Heatmap(z=pivot.values, x=[f"r{r}" for r in rounds], y=ticks,
+                      colorscale=colorscale, zmin=0, text=pivot.values,
+                      texttemplate="%{text}", textfont=dict(size=11),
+                      colorbar=dict(title="# critics", len=colorbar_len, y=colorbar_y))
+
+
+CONTROL_COLOR = "#b06c3f"  # copper — isolated-critic control lines
+
+
 def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
-                usage_df: pd.DataFrame, top_labels: list[str]) -> go.Figure:
+                usage_df: pd.DataFrame, top_labels: list[str],
+                control_vocab: pd.DataFrame | None = None,
+                control_spread: pd.DataFrame | None = None,
+                control_usage: pd.DataFrame | None = None,
+                control_top: list[str] | None = None) -> go.Figure:
     """Two convergence panels on top, a top-descriptor usage heatmap below.
 
     Top-left: average pairwise Jaccard overlap of critics' descriptor sets per
@@ -320,30 +354,61 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
     lines. Top-right: std of critics' scores per round (falling = agreeing more
     on quality). Bottom: the 10 most-used descriptors × round, colored by how
     many critics used each that round.
+
+    If control_vocab / control_spread are given (the isolated-critic control),
+    they are overlaid as copper lines on the two top panels and a legend is
+    shown distinguishing baseline from control.
     """
-    fig = make_subplots(
-        rows=2, cols=2,
-        row_heights=[0.45, 0.55],
-        vertical_spacing=0.16,
-        specs=[[{}, {}], [{"colspan": 2}, None]],
-        subplot_titles=(
-            "Vocabulary convergence between critics",
-            "Score spread between critics (lower = agreement)",
-            "Top 10 descriptors — how many critics used each, by round",
-        ),
-    )
+    has_control = control_vocab is not None
+    base_name = "baseline" if has_control else None
+    # A second heatmap row appears only when the control's descriptors are given.
+    two_heatmaps = has_control and control_top is not None
+
+    if two_heatmaps:
+        fig = make_subplots(
+            rows=3, cols=2,
+            row_heights=[0.34, 0.33, 0.33],
+            vertical_spacing=0.12, horizontal_spacing=0.13,
+            specs=[[{}, {}], [{"colspan": 2}, None], [{"colspan": 2}, None]],
+            subplot_titles=(
+                "Vocabulary convergence", "Score spread (lower = agreement)",
+                "Baseline — top 10 descriptors, critics using each by round",
+                "Control (isolated) — top 10 descriptors, critics using each by round",
+            ),
+        )
+    else:
+        fig = make_subplots(
+            rows=2, cols=2,
+            row_heights=[0.45, 0.55],
+            vertical_spacing=0.16, horizontal_spacing=0.13,
+            specs=[[{}, {}], [{"colspan": 2}, None]],
+            subplot_titles=(
+                "Vocabulary convergence",
+                "Score spread (lower = agreement)",
+                "Top 10 descriptors — critics using each, by round",
+            ),
+        )
 
     # Left panel: vocabulary overlap as a percentage, with early/late lines.
     vocab_df = vocab_df.sort_values("round")
-    overlap_pct = vocab_df["jaccard"] * 100
     fig.add_trace(
-        go.Scatter(x=vocab_df["round"], y=overlap_pct, mode="lines+markers",
+        go.Scatter(x=vocab_df["round"], y=vocab_df["jaccard"] * 100, mode="lines+markers",
+                   name=base_name, legendgroup="baseline", showlegend=has_control,
                    line=dict(color="#3b4cb8", width=2.5), marker=dict(size=9),
-                   hovertemplate="round %{x}: %{y:.1f}%<extra></extra>",
-                   showlegend=False),
+                   hovertemplate="round %{x}: %{y:.1f}%<extra>baseline</extra>"),
         row=1, col=1,
     )
-    if len(vocab_df) >= 2:
+    if has_control:
+        cv = control_vocab.sort_values("round")
+        fig.add_trace(
+            go.Scatter(x=cv["round"], y=cv["jaccard"] * 100, mode="lines+markers",
+                       name="control (isolated)", legendgroup="control",
+                       line=dict(color=CONTROL_COLOR, width=2.5), marker=dict(size=9),
+                       hovertemplate="round %{x}: %{y:.1f}%<extra>control</extra>"),
+            row=1, col=1,
+        )
+    elif len(vocab_df) >= 2:
+        # Reference lines only in the solo view; they'd clutter the overlay.
         early, late, pct = _early_late(vocab_df["jaccard"].tolist())
         fig.add_hline(y=early * 100, line_dash="dash", line_color="#9aa0a6", line_width=1,
                       annotation_text=f"early avg {early * 100:.1f}%",
@@ -361,102 +426,151 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
     spread_df = spread_df.sort_values("round")
     fig.add_trace(
         go.Scatter(x=spread_df["round"], y=spread_df["spread"], mode="lines+markers",
-                   line=dict(color="#8a4b2f", width=2.5), marker=dict(size=9),
-                   showlegend=False),
+                   name=base_name, legendgroup="baseline", showlegend=False,
+                   line=dict(color="#3b4cb8" if has_control else "#8a4b2f", width=2.5),
+                   marker=dict(size=9)),
         row=1, col=2,
     )
+    if control_spread is not None:
+        cs = control_spread.sort_values("round")
+        fig.add_trace(
+            go.Scatter(x=cs["round"], y=cs["spread"], mode="lines+markers",
+                       name="control (isolated)", legendgroup="control", showlegend=False,
+                       line=dict(color=CONTROL_COLOR, width=2.5), marker=dict(size=9)),
+            row=1, col=2,
+        )
     fig.update_yaxes(title_text="std of the critics' scores", rangemode="tozero",
                      row=1, col=2)
     fig.update_xaxes(title_text="round", row=1, col=2)
 
-    # Bottom panel: top-descriptor usage heatmap (descriptor × round → #critics).
-    if top_labels:
-        rounds = sorted(usage_df["round"].unique())
-        # Most-used at the top: reverse so the heatmap's first row sits highest.
-        labels = list(reversed(top_labels))
-        pivot = (usage_df.pivot(index="cluster", columns="round", values="n_critics")
-                         .reindex(index=labels, columns=rounds).fillna(0).astype(int))
-        # Truncate long phrases so the y-axis stays readable.
-        ticks = [f"“{l[:34]}{'…' if len(l) > 34 else ''}”" for l in labels]
-        fig.add_trace(
-            go.Heatmap(z=pivot.values, x=[f"r{r}" for r in rounds], y=ticks,
-                       colorscale="Blues", zmin=0, text=pivot.values,
-                       texttemplate="%{text}", textfont=dict(size=11),
-                       colorbar=dict(title="# critics", len=0.45, y=0.22)),
-            row=2, col=1,
-        )
+    # Heatmap panel(s): top-descriptor usage (descriptor × round → #critics).
+    # Baseline in blue; when a control is present, its descriptors go in a
+    # second copper heatmap below.
+    base_cbar_y = 0.30 if two_heatmaps else 0.22
+    heatmap = usage_heatmap(usage_df, top_labels, colorscale="Blues",
+                            colorbar_y=base_cbar_y, colorbar_len=0.3 if two_heatmaps else 0.45)
+    if heatmap is not None:
+        fig.add_trace(heatmap, row=2, col=1)
     else:
         fig.add_annotation(text="No descriptors to rank.", xref="x domain",
                            yref="y domain", x=0.5, y=0.5, showarrow=False,
                            row=2, col=1)
     fig.update_xaxes(title_text="round", row=2, col=1)
 
-    fig.update_layout(height=900, plot_bgcolor="white",
-                      title_text="Observation kernel — convergence between critics")
+    if two_heatmaps:
+        ctrl_heatmap = usage_heatmap(control_usage, control_top, colorscale="Oranges",
+                                     colorbar_y=-0.02, colorbar_len=0.3)
+        if ctrl_heatmap is not None:
+            fig.add_trace(ctrl_heatmap, row=3, col=1)
+        fig.update_xaxes(title_text="round", row=3, col=1)
+
+    title = ("Observation kernel — baseline vs. control" if has_control
+             else "Observation kernel — convergence between critics")
+    # Extra top margin so the title, legend, and the two subplot titles each get
+    # their own band instead of stacking on top of one another.
+    fig.update_layout(
+        height=1240 if two_heatmaps else 920, plot_bgcolor="white",
+        title=dict(text=title, y=0.99, yanchor="top"),
+        margin=dict(t=150 if has_control else 110),
+        legend=dict(orientation="h", y=1.09, yanchor="bottom", x=0.5, xanchor="center")
+        if has_control else {})
     fig.update_xaxes(showgrid=True, gridcolor="#eee", row=1)
     fig.update_yaxes(showgrid=True, gridcolor="#eee", row=1)
     return fig
 
 
-def main() -> None:
-    # Pick the run to analyze: a path argument, or the newest log.
-    if len(sys.argv) > 1:
-        log_path = Path(sys.argv[1])
-    else:
-        logs = sorted(Path("logs").glob("run_*.jsonl"))
-        if not logs:
-            sys.exit("No logs found in logs/. Run run.py first.")
-        log_path = logs[-1]
-    print(f"Analyzing {log_path}")
+def pooled_descriptor_pipeline(
+        evals_by_condition: dict[str, pd.DataFrame], nlp,
+        embed_model: SentenceTransformer) -> tuple[dict[str, pd.DataFrame], list[str], int]:
+    """Extract → subtract prior vocabulary → cluster, for several conditions at once.
 
+    Clustering conditions separately does not produce comparable numbers. Each
+    run would get its own cluster structure, and a run with more descriptors can
+    end up with coarser clusters, which mechanically raises its pairwise Jaccard
+    overlap whether or not anything real happened. Jaccard measured in two
+    differently-shaped vocabulary spaces compares the shapes, not the runs.
+
+    So both steps that define the space run exactly once over the pooled
+    descriptors — the prior-vocabulary subtraction and the clustering — and the
+    resulting assignment is applied to each condition afterwards. Every returned
+    frame therefore carries cluster labels drawn from one shared space.
+
+    Returns ({condition: occ}, seeds, n_subtracted). Note the caveat carried by
+    prior_vocabulary(): it reads the CURRENT agents.py / agents.yaml, so pooling
+    is only meaningful for logs generated against the same prompt files.
+    """
+    per_condition = {name: build_occurrences(evals, nlp)
+                     for name, evals in evals_by_condition.items()}
+    pooled = pd.concat(
+        [occ.assign(condition=name) for name, occ in per_condition.items()],
+        ignore_index=True,
+    )
+    if pooled.empty:
+        return per_condition, [], 0
+
+    seeds = prior_vocabulary(nlp)
+    n_before = pooled["descriptor"].nunique()
+    pooled = subtract_prior_vocabulary(pooled, seeds, embed_model, PRIOR_VOCAB_THRESHOLD)
+    n_subtracted = n_before - pooled["descriptor"].nunique()
+    if pooled.empty:
+        return {name: pooled.copy() for name in per_condition}, seeds, n_subtracted
+
+    assignment = canonicalize(pooled["descriptor"].tolist(), embed_model,
+                              SIMILARITY_THRESHOLD)
+    pooled["cluster"] = pooled["descriptor"].map(assignment)
+    split = {name: pooled[pooled["condition"] == name].drop(columns="condition").copy()
+             for name in per_condition}
+    return split, seeds, n_subtracted
+
+
+def descriptor_pipeline(critic_evals: pd.DataFrame, nlp,
+                        embed_model: SentenceTransformer) -> tuple[pd.DataFrame, list[str], int]:
+    """Single-condition pipeline. Returns (occ, seeds, n_subtracted).
+
+    A thin wrapper over pooled_descriptor_pipeline so there is only one
+    implementation of the pipeline. Use this when analyzing one log on its own;
+    anything that compares two conditions must use the pooled entry point, or
+    the two sides end up in different vocabulary spaces.
+    """
+    by_condition, seeds, n_subtracted = pooled_descriptor_pipeline(
+        {"single": critic_evals}, nlp, embed_model)
+    return by_condition["single"], seeds, n_subtracted
+
+
+def critic_evaluations(log_path: Path) -> pd.DataFrame:
+    """The critic evaluations of one run log, or exit if there are none."""
     df = load_records(log_path)
     critic_evals = df[(df["role"] == "critic") & (df["kind"] == "evaluation")].copy()
     if critic_evals.empty:
-        sys.exit("No critic evaluations in this run.")
+        sys.exit(f"No critic evaluations in {log_path}.")
+    return critic_evals
 
-    nlp = spacy.load(SPACY_MODEL)
-    embed_model = SentenceTransformer(EMBED_MODEL)
 
-    # 1) descriptors per (round, critic)
-    occ = build_occurrences(critic_evals, nlp)
-    if occ.empty:
-        sys.exit("No descriptors extracted from critic evaluations.")
+def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
+                            occ: pd.DataFrame, seeds: list[str],
+                            n_subtracted: int, pooled_with: str | None = None) -> None:
+    """Compute one condition's metrics and write its figure + summary JSON.
 
-    # 2) subtract the prior vocabulary — only descriptors present in NO
-    #    starting prompt can count as coined
-    seeds = prior_vocabulary(nlp)
-    n_before = occ["descriptor"].nunique()
-    occ = subtract_prior_vocabulary(occ, seeds, embed_model, PRIOR_VOCAB_THRESHOLD)
-    n_subtracted = n_before - occ["descriptor"].nunique()
-    print(f"  prior vocabulary: {len(seeds)} seed descriptors; "
-          f"subtracted {n_subtracted} of {n_before} candidates")
-    if occ.empty:
-        sys.exit("All descriptors were already in the starting prompts.")
-
-    # 3) cluster the survivors (exact + embedding similarity), label each row
-    assignment = canonicalize(occ["descriptor"].tolist(), embed_model, SIMILARITY_THRESHOLD)
-    occ["cluster"] = occ["descriptor"].map(assignment)
-
-    # 4) propagation, scores, and the two convergence metrics the figure plots
+    `pooled_with` records the other run whose descriptors shared this run's
+    vocabulary space, so nobody later mistakes a jointly-clustered number for an
+    independently-clustered one.
+    """
     propagation_df, propagated_labels = find_propagation(occ)
     scores_df = score_trajectories(critic_evals)
     vocab_df = vocabulary_convergence(occ)
     spread_df = score_spread(scores_df)
     usage_df, top_labels = top_descriptor_usage(occ, top_n=10)
 
-    print(f"  {occ['cluster'].nunique()} descriptor clusters; "
+    print(f"  {log_path.stem}: {occ['cluster'].nunique()} descriptor clusters; "
           f"{len(propagated_labels)} propagated across critics: {propagated_labels}")
 
-    # Vocabulary-convergence headline (early vs. late pairwise overlap).
     vocab_trend = None
     if len(vocab_df) >= 2:
         early, late, pct = _early_late(vocab_df.sort_values("round")["jaccard"].tolist())
         vocab_trend = {"early": round(early, 3), "late": round(late, 3),
                        "pct_change": round(pct, 1)}
-        print(f"  vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
+        print(f"    vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
 
-    # 5) outputs, keyed by run id so report.py can attach them to the run:
-    #    the figure, plus a small JSON summary of what propagated.
     FIGURE_DIR.mkdir(exist_ok=True)
     fig = make_figure(vocab_df, spread_df, usage_df, top_labels)
     fig_path = FIGURE_DIR / f"analysis_{log_path.stem}.html"
@@ -470,10 +584,70 @@ def main() -> None:
         "prior_vocab_subtracted": int(n_subtracted),
         "convergence": convergence_summary(scores_df),
         "vocab_trend": vocab_trend,
+        # None for a standalone analysis; the paired run id when clustered jointly.
+        "pooled_with": pooled_with,
     }
     summary_path = FIGURE_DIR / f"analysis_{log_path.stem}.json"
     summary_path.write_text(json.dumps(summary, indent=2))
-    print(f"Wrote {fig_path} and {summary_path}")
+    print(f"    wrote {fig_path} and {summary_path}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Analyze a run, or a treatment/control pair in one vocabulary space.")
+    parser.add_argument("logfile", nargs="?", type=Path,
+                        help="a single run log (default: the newest in logs/)")
+    parser.add_argument("--treatment", type=Path,
+                        help="treatment log; pair with --control to cluster jointly")
+    parser.add_argument("--control", type=Path, help="control log")
+    args = parser.parse_args()
+
+    paired = args.treatment is not None or args.control is not None
+    if paired:
+        if not (args.treatment and args.control):
+            sys.exit("--treatment and --control must be given together.")
+        if args.logfile:
+            sys.exit("Give either a single log or --treatment/--control, not both.")
+        conditions = {"treatment": args.treatment, "control": args.control}
+    else:
+        log_path = args.logfile
+        if log_path is None:
+            logs = sorted(Path("logs").glob("run_*.jsonl"))
+            if not logs:
+                sys.exit("No logs found in logs/. Run run.py first.")
+            log_path = logs[-1]
+        conditions = {"single": log_path}
+
+    for path in conditions.values():
+        if not path.exists():
+            sys.exit(f"Log not found: {path}")
+    if paired:
+        print(f"Analyzing treatment {conditions['treatment'].name} and "
+              f"control {conditions['control'].name} in one shared vocabulary space")
+    else:
+        print(f"Analyzing {conditions['single']}")
+
+    nlp = spacy.load(SPACY_MODEL)
+    embed_model = SentenceTransformer(EMBED_MODEL)
+
+    evals = {name: critic_evaluations(path) for name, path in conditions.items()}
+    by_condition, seeds, n_subtracted = pooled_descriptor_pipeline(evals, nlp, embed_model)
+    if all(occ.empty for occ in by_condition.values()):
+        sys.exit("No descriptors survived (none extracted, or all were seeded).")
+    print(f"  prior vocabulary: {len(seeds)} seed descriptors; "
+          f"subtracted {n_subtracted} candidates (pooled across all conditions)")
+    if paired:
+        pooled_clusters = pd.concat(by_condition.values())["cluster"].nunique()
+        print(f"  shared vocabulary space: {pooled_clusters} clusters total")
+
+    for name, path in conditions.items():
+        occ = by_condition[name]
+        if occ.empty:
+            print(f"  {path.stem}: no descriptors survived; skipped")
+            continue
+        other = next((conditions[o].stem for o in conditions if o != name), None)
+        write_condition_outputs(path, evals[name], occ, seeds, n_subtracted,
+                                pooled_with=other)
 
 
 if __name__ == "__main__":

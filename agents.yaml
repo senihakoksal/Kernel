@@ -5,7 +5,6 @@
 # remove agents here to scale up — run.py reads this file and never hardcodes
 # who is in the studio.
 #
-# IMPORTANT: the dispositions are placeholders. Write them yourself.
 
 agents:
   
