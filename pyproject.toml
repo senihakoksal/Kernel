@@ -19,8 +19,20 @@ analysis = [
     "pandas>=2.0",
     "spacy>=3.7",                 # noun-phrase (descriptor) extraction
     "sentence-transformers>=3.0", # semantic similarity for propagation
+    "scikit-learn>=1.4",          # agglomerative descriptor clustering (metric= kwarg)
     "plotly>=5.0",                # visualization
 ]
+
+# Test-only dependencies. The suite stubs the Anthropic client, so it needs
+# no API key and makes no network calls.
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+# Flat scaffold: modules live at the repo root, so put it on the path for tests.
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]

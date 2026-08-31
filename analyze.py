@@ -26,15 +26,16 @@ Usage:
 
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import spacy
 import yaml
 from plotly.subplots import make_subplots
 from sentence_transformers import SentenceTransformer
+from sklearn.cluster import AgglomerativeClustering
 
 from agents import SHARED_SYSTEM_PROMPT
 
@@ -125,33 +126,52 @@ def canonicalize(descriptors: list[str], model: SentenceTransformer,
                  threshold: float) -> dict[str, str]:
     """Map each unique descriptor to a cluster label.
 
-    Greedy single-pass clustering: each descriptor joins the first existing
-    cluster whose representative is within `threshold` cosine similarity,
-    otherwise it starts a new cluster (and labels it). Embeddings are normalized
-    so a dot product is cosine similarity.
+    Agglomerative clustering with complete linkage over cosine distance. Two
+    properties matter, and neither held for the greedy single pass this
+    replaced:
+
+      - Order independence. The greedy version walked descriptors in
+        alphabetical order and froze each cluster's founder as its permanent
+        representative, so the partition depended on spelling rather than on
+        the data.
+      - No chaining. Complete linkage requires EVERY pair in a cluster to sit
+        within the threshold, so A and C cannot land together merely because
+        both resemble B. (single linkage would reintroduce exactly that, and
+        ward does not accept a cosine metric at all.)
+
+    `threshold` is a cosine SIMILARITY. sklearn wants a DISTANCE, so it is
+    converted here: 0.72 similarity -> 0.28 distance. This one line is
+    load-bearing — passing a similarity straight through as distance_threshold
+    merges nearly everything into a single cluster, which does not look like an
+    error, it looks like a spectacular convergence result.
+
+    Labels are the most frequent member of each cluster, ties broken
+    alphabetically. That is why `descriptors` is taken WITH duplicates: a
+    cluster should be named for the phrase critics actually reached for, not
+    for whichever member happened to sort first.
     """
-    uniq = sorted(set(descriptors))
+    counts = Counter(descriptors)
+    uniq = sorted(counts)
     if not uniq:
         return {}
+    if len(uniq) == 1:
+        # AgglomerativeClustering needs at least two samples to fit.
+        return {uniq[0]: uniq[0]}
+
     embeddings = model.encode(uniq, normalize_embeddings=True)
+    labels = AgglomerativeClustering(
+        n_clusters=None,                     # mandatory when a threshold is set
+        distance_threshold=1.0 - threshold,  # DISTANCE, not similarity
+        metric="cosine",
+        linkage="complete",
+    ).fit(embeddings).labels_
 
-    cluster_reps: list[np.ndarray] = []  # representative embedding per cluster
-    cluster_labels: list[str] = []       # label (first descriptor) per cluster
-    assignment: dict[str, str] = {}
-
-    for i, descriptor in enumerate(uniq):
-        best_idx, best_sim = -1, 0.0
-        for ci, rep in enumerate(cluster_reps):
-            sim = float(np.dot(embeddings[i], rep))
-            if sim > best_sim:
-                best_idx, best_sim = ci, sim
-        if best_idx >= 0 and best_sim >= threshold:
-            assignment[descriptor] = cluster_labels[best_idx]
-        else:
-            cluster_reps.append(embeddings[i])
-            cluster_labels.append(descriptor)
-            assignment[descriptor] = descriptor
-    return assignment
+    members: dict[int, list[str]] = defaultdict(list)
+    for descriptor, label in zip(uniq, labels):
+        members[label].append(descriptor)
+    names = {label: sorted(group, key=lambda d: (-counts[d], d))[0]
+             for label, group in members.items()}
+    return {descriptor: names[label] for descriptor, label in zip(uniq, labels)}
 
 
 def build_occurrences(critic_evals: pd.DataFrame, nlp) -> pd.DataFrame:
