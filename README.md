@@ -32,7 +32,6 @@ converge or split?
 - [agents.py](agents.py) — the `Agent` class, the shared system prompt, the
   feed formatter, and JSON parsing. `MODEL` lives here.
 - [agents.yaml](agents.yaml) — the agent roster (name, role, disposition).
-  **Dispositions are placeholders — write them yourself.**
 - [run.py](run.py) — the round loop.
 - [analyze.py](analyze.py) — descriptor-propagation and score analysis. The
   similarity threshold (`SIMILARITY_THRESHOLD`) is a marked constant to tune.
