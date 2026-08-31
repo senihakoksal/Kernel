@@ -44,8 +44,8 @@ from agents import SHARED_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
 # Similarity threshold for treating two descriptors as "the same" idea.
-# This is the key knob for the propagation metric — TUNE THIS.
-# Higher = stricter (only near-identical phrases match); lower = looser.
+# Swept 0.45–0.90 (docs/threshold-sweep.md); kept at 0.72 because merges here
+# are clean synonym groups and below 0.65 distinct ideas begin to combine.
 SIMILARITY_THRESHOLD = 0.72
 
 # Threshold for matching a candidate against the prior vocabulary (descriptors
