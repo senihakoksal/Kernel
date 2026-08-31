@@ -31,6 +31,16 @@ def load_analysis(run_id: str) -> dict | None:
     return summary
 
 
+def load_comparison(run_id: str) -> dict | None:
+    """Load the compare.py summary attaching an isolated-critic control to a run."""
+    summary_path = FIGURE_DIR / f"compare_{run_id}.json"
+    if not summary_path.exists():
+        return None
+    summary = json.loads(summary_path.read_text())
+    summary["figure"] = f"../figures/compare_{run_id}.html"
+    return summary
+
+
 def load_runs() -> list[dict]:
     """Read every run log into {id, started, records, analysis} dicts, newest first."""
     runs: list[dict] = []
@@ -44,6 +54,7 @@ def load_runs() -> list[dict]:
             "started": started,
             "records": records,
             "analysis": load_analysis(path.stem),
+            "comparison": load_comparison(path.stem),
         })
     return runs
 
@@ -117,6 +128,14 @@ PAGE = """<!DOCTYPE html>
   ul.method { margin: .5rem 0 1.2rem; padding-left: 1.1rem; max-width: 46rem; }
   ul.method li { color: var(--soft); margin: .35rem 0; padding-left: .2rem; }
   ul.method strong { color: var(--ink); }
+  .report p.caveat { background: #f0ebe0; border-left: 3px solid #cbb892;
+                     padding: .6rem .9rem; font-size: .9rem; }
+  details.about { margin-bottom: 1.2rem; }
+  details.about summary { font-family: var(--sans); font-size: .68rem; font-weight: 600;
+                       letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
+                       cursor: pointer; }
+  details.about summary:hover { color: var(--ink); }
+  details.about[open] summary { margin-bottom: .6rem; }
   details.propagated { margin-top: 1.2rem; border-top: 1px solid var(--hairline);
                        padding-top: .8rem; }
   details.propagated summary { font-family: var(--sans); font-size: .68rem;
@@ -130,7 +149,9 @@ PAGE = """<!DOCTYPE html>
   ul.themes li::before { content: ""; position: absolute; left: 0; top: .72em;
                          width: .38rem; height: .38rem; border-radius: 50%;
                          background: #cfc6b2; }
-  .report iframe { width: 100%; height: 520px; border: 1px solid var(--hairline);
+  /* Height is set per figure inline (analyze.py emits 920px, or 1240px with a
+     control overlay); this is only the fallback if that attribute is missing. */
+  .report iframe { width: 100%; height: 960px; border: 1px solid var(--hairline);
                    background: #fff; margin-top: .6rem; }
   code { background: var(--panel); border: 1px solid var(--hairline);
          padding: .1rem .35rem; font-size: .85em; }
@@ -266,8 +287,40 @@ function showRun(i) {
         between the first and last rounds.`;
     }
 
+    // With a control, the figure overlays it and this explanation sits above the figure.
+    const cmp = run.comparison;
+    const figureSrc = cmp ? cmp.figure : a.figure;
+    // Match analyze.py's make_figure(): 1240px with the control's two extra
+    // heatmap panels, 920px without. Plus a little room so nothing clips.
+    const figureHeight = cmp ? 1260 : 940;
+    const controlBlock = cmp ? `
+            <div class="label">Baseline vs. control</div>
+            <p>The convergence could have three sources: critics <em>reading each other</em>,
+            critics all judging the <em>same artworks</em>, or shared model <em>priors</em>. To
+            isolate the first, the copper line below replays the identical artworks but with each
+            critic isolated &mdash; it sees only the artworks and its <em>own</em> past critiques,
+            never another critic's. Same stimulus and priors; the one thing removed is the
+            peer-critique channel, so the <strong>gap between the two lines</strong> is the share
+            of convergence that comes from critics reading one another. Vocabulary overlap grew
+            from ${(cmp.treatment.early*100).toFixed(1)}% to ${(cmp.treatment.late*100).toFixed(1)}%
+            in the baseline but only ${(cmp.control.early*100).toFixed(1)}% to
+            ${(cmp.control.late*100).toFixed(1)}% when critics were isolated.</p>
+            <p>Both conditions are clustered <em>together</em>, in one pooled vocabulary space
+            of ${cmp.n_clusters ? cmp.n_clusters + " clusters" : "shared clusters"}. This matters:
+            clustered separately, whichever run produced more descriptors could end up with
+            coarser clusters and a mechanically higher overlap, and the gap between the lines
+            would partly measure that rather than the peer-critique channel.</p>
+            <p class="caveat"><strong>Read with care:</strong> at round 0 the two conditions are
+            identical by construction (no critiques exist yet) &mdash; the critics' prompts are
+            verified byte-identical there by the test suite &mdash; so any gap at round 0 is
+            sampling noise. From round 1 the isolated critics also carry their own regenerated
+            history, so the conditions differ in more than the peer channel alone.
+            With a single run per condition the direction is suggestive, not conclusive &mdash;
+            replication with several control runs would put an error band on it.</p>` : "";
+
     out += `<div class="report">
-            <div class="label">What we're looking for</div>
+            <details class="about">
+            <summary>What we're looking for &amp; how we measure it</summary>
             <p>Does a new aesthetic descriptor coined by one critic &mdash; present in no
             starting prompt &mdash; propagate to other critics over rounds, and do critics'
             judgments converge or split?</p>
@@ -280,7 +333,10 @@ function showRun(i) {
                 in the system prompt or an artist/critic disposition (exact match or embedding
                 similarity), so only language coined <em>during</em> the run can count.</li>
               <li><strong>Cluster near-synonyms.</strong> Group descriptors by sentence-embedding
-                similarity (threshold ${a.threshold}) so paraphrases count as one descriptor.</li>
+                similarity (threshold ${a.threshold}) so paraphrases count as one descriptor.
+                Clustering is agglomerative with complete linkage, so the grouping does not
+                depend on the order descriptors happen to be read in, and two descriptors are
+                never pooled merely because both resemble some third one.</li>
               <li><strong>Propagation.</strong> A descriptor &ldquo;propagated&rdquo; if, after first
                 appearing in one critic's writing, it later appears in a <em>different</em>
                 critic's writing.</li>
@@ -288,11 +344,13 @@ function showRun(i) {
                 critics' descriptor sets per round; score spread = standard deviation of the
                 critics' scores per round.</li>
             </ul>
+            </details>
             <div class="label">Findings</div>
             <p>${findings}</p>
+            ${controlBlock}
             <div class="label">Figure</div>
-            <p><a href="${esc(a.figure)}" target="_blank">open full figure &nearr;</a></p>
-            <iframe src="${esc(a.figure)}" loading="lazy"></iframe>
+            <p><a href="${esc(figureSrc)}" target="_blank">open full figure &nearr;</a></p>
+            <iframe src="${esc(figureSrc)}" style="height:${figureHeight}px" loading="lazy"></iframe>
             <details class="propagated">
               <summary>Propagated descriptors (${a.propagated.length})</summary>
               ${themes}
