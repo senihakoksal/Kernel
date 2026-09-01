@@ -340,6 +340,63 @@ def usage_heatmap(usage_df: pd.DataFrame, top_labels: list[str],
                       colorbar=dict(title="# critics", len=colorbar_len, y=colorbar_y))
 
 
+def adoption_rate(occ: pd.DataFrame) -> pd.DataFrame:
+    """Share of borrowable vocabulary actually in use, per round.
+
+    A rate, not a count: a raw count of adoptions is uninterpretable without
+    knowing how many chances there were, and the pool of adoptable vocabulary
+    grows every round, so a rising count can reflect nothing but a bigger pool.
+    Per round, not cumulative: a running total can only rise — it climbs whether
+    adoption is accelerating, steady, or dying — so it cannot answer the one
+    question this panel exists for.
+
+    For a round r, with first_round(k) the earliest round cluster k appears and
+    coiners(k) every critic who used it in that round:
+
+      eligible(c, r) = clusters k where first_round(k) < r and c not in coiners(k)
+      opportunities(r) = sum over critics of |eligible(c, r)|
+      uses(r)          = (critic, cluster) pairs from those eligible sets that
+                         the critic used at round r
+      rate(r)          = uses(r) / opportunities(r)
+
+    This is PREVALENCE, not incidence: every round a critic uses a borrowed
+    cluster counts, not only the first. A term adopted once and dropped is a
+    failed transmission; a convention is a term that keeps being reproduced.
+    Capped at once per (critic, cluster) per round, so one critic with a verbal
+    tic cannot dominate the measure.
+
+    Rounds where opportunities(r) == 0 are OMITTED, never plotted as zero. That
+    always includes round 0, where the eligible pool is empty and the rate is
+    0/0 — undefined, not zero. Returns columns round/uses/opportunities/rate.
+    """
+    columns = ["round", "uses", "opportunities", "rate"]
+    if occ.empty:
+        return pd.DataFrame(columns=columns)
+
+    critics = sorted(occ["critic"].unique())
+    first_round: dict = {}
+    coiners: dict = {}
+    for cluster, grp in occ.groupby("cluster"):
+        fr = grp["round"].min()
+        first_round[cluster] = fr
+        coiners[cluster] = set(grp.loc[grp["round"] == fr, "critic"])
+
+    # Deduplicated: repeated use of a cluster inside one round counts once.
+    used = set(zip(occ["critic"], occ["cluster"], occ["round"]))
+
+    rows = []
+    for r in sorted(occ["round"].unique()):
+        eligible = [(c, k) for k, fr in first_round.items() if fr < r
+                    for c in critics if c not in coiners[k]]
+        if not eligible:
+            continue
+        uses = sum(1 for c, k in eligible if (c, k, r) in used)
+        rows.append({"round": int(r), "uses": uses, "opportunities": len(eligible),
+                     "rate": uses / len(eligible)})
+    return pd.DataFrame(rows, columns=columns)
+
+
+
 CONTROL_COLOR = "#b06c3f"  # copper — isolated-critic control lines
 
 
