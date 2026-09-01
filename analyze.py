@@ -256,10 +256,29 @@ def vocabulary_convergence(occ: pd.DataFrame) -> pd.DataFrame:
     """Average pairwise vocabulary overlap between critics, per round.
 
     For each round, take each critic's set of descriptor clusters and compute
-    the Jaccard overlap |A∩B| / |A∪B| for every pair of critics, then average.
-    Rising overlap means critics are increasingly reaching for the same
+    two overlap measures for every pair of critics, then average each over the
+    pairs. Rising overlap means critics are increasingly reaching for the same
     descriptors — vocabulary convergence. Rounds with fewer than two critics
     (no pair to compare) are skipped.
+
+      jaccard = |A∩B| / |A∪B|
+      dice    = 2|A∩B| / (|A|+|B|)
+
+    Both are returned. Dice is what the figure plots — it does not penalise the
+    union twice, so it reads higher on sparse sets like these — while Jaccard is
+    kept in the frame and in the summary JSON so a reader can check the
+    transform for themselves.
+
+    NOTE on the relationship: dice = 2j/(1+j) holds for a single PAIR. It does
+    NOT survive averaging. The transform is concave, so by Jensen's inequality
+    the mean of the per-pair Dice values is at most the transform of the mean
+    Jaccard, with equality only when every pair overlaps identically. On the
+    shipped runs the two differ by 0.07–0.26 percentage points.
+
+    Averaging per pair is the right thing to do — each pair is an observation —
+    so these two columns are genuinely two different averages, not one derived
+    from the other. Do not "simplify" this by computing dice from the averaged
+    jaccard: it would change the number and quietly misreport what was measured.
     """
     rows = []
     for rnd, grp in occ.groupby("round"):
@@ -267,14 +286,19 @@ def vocabulary_convergence(occ: pd.DataFrame) -> pd.DataFrame:
         critics = list(sets)
         if len(critics) < 2:
             continue
-        pair_jaccard = []
+        pair_jaccard, pair_dice = [], []
         for i in range(len(critics)):
             for j in range(i + 1, len(critics)):
                 a, b = sets[critics[i]], sets[critics[j]]
+                intersection = len(a & b)
                 union = a | b
-                pair_jaccard.append(len(a & b) / len(union) if union else 0.0)
-        rows.append({"round": int(rnd), "jaccard": sum(pair_jaccard) / len(pair_jaccard)})
-    return pd.DataFrame(rows)
+                sizes = len(a) + len(b)
+                pair_jaccard.append(intersection / len(union) if union else 0.0)
+                pair_dice.append(2 * intersection / sizes if sizes else 0.0)
+        rows.append({"round": int(rnd),
+                     "jaccard": sum(pair_jaccard) / len(pair_jaccard),
+                     "dice": sum(pair_dice) / len(pair_dice)})
+    return pd.DataFrame(rows, columns=["round", "jaccard", "dice"])
 
 
 def score_spread(scores_df: pd.DataFrame) -> pd.DataFrame:
@@ -523,7 +547,7 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
     if has_control:
         cv = control_vocab.sort_values("round")
         fig.add_trace(
-            go.Scatter(x=cv["round"], y=cv["jaccard"] * 100, mode="lines+markers",
+            go.Scatter(x=cv["round"], y=cv["dice"] * 100, mode="lines+markers",
                        name=CONTROL_NAME, legendgroup="control", legendrank=2,
                        fill="tozeroy", fillcolor=_rgba(PALETTE["inherited"], INHERITED_ALPHA),
                        line=dict(color=PALETTE["control"], width=2),
@@ -531,7 +555,7 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
                        hovertemplate="%{y:.1f}%<extra>control</extra>"),
             row=1, col=1)
     fig.add_trace(
-        go.Scatter(x=vocab_df["round"], y=vocab_df["jaccard"] * 100, mode="lines+markers",
+        go.Scatter(x=vocab_df["round"], y=vocab_df["dice"] * 100, mode="lines+markers",
                    name=TREATMENT_NAME, legendgroup="treatment", legendrank=1,
                    fill="tonexty" if has_control else None,
                    fillcolor=_rgba(PALETTE["treatment"], BAND_ALPHA) if has_control else None,
@@ -541,19 +565,19 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
         row=1, col=1)
 
     if has_control:
-        band = _midpoint_label_position(vocab_df, control_vocab, "round", "jaccard", 100)
+        band = _midpoint_label_position(vocab_df, control_vocab, "round", "dice", 100)
         if band:
             _region_label(fig, 1, band[0], band[1], "added by peer visibility")
-        inherited = _midpoint_label_position(control_vocab, None, "round", "jaccard", 100)
+        inherited = _midpoint_label_position(control_vocab, None, "round", "dice", 100)
         if inherited:
             _region_label(fig, 1, inherited[0], inherited[1],
                           "shared without contact — inherited from the model")
 
-    fig.update_yaxes(title_text="avg pairwise overlap", ticksuffix="%",
+    fig.update_yaxes(title_text="avg pairwise overlap (Dice)", ticksuffix="%",
                      rangemode="tozero", row=1, col=1)
     _panel_heading(fig, 1, "Vocabulary shared between critics",
-                   "share of descriptor vocabulary two critics have in common, "
-                   "averaged over all critic pairs")
+                   "share of descriptor vocabulary two critics have in common (Dice), "
+                   "averaged over all 10 critic pairs")
 
     # --- Row 2: borrowed vocabulary in use ----------------------------------
     rate_df = rate_df.sort_values("round") if not rate_df.empty else rate_df
@@ -828,7 +852,10 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         early, late, pct = _early_late(vocab_df.sort_values("round")["jaccard"].tolist())
         vocab_trend = {"early": round(early, 3), "late": round(late, 3),
                        "pct_change": round(pct, 1)}
-        print(f"    vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
+        # Jaccard, not the Dice series row 1 plots — say so, or a reader will
+        # try to match this against the figure and fail.
+        print(f"    vocabulary overlap (Jaccard): early {early:.3f} -> "
+              f"late {late:.3f} ({pct:+.0f}%)")
 
     FIGURE_DIR.mkdir(exist_ok=True)
     fig = make_figure(vocab_df, spread_df, rate_df)
@@ -864,8 +891,12 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         # The plotted numbers, so the archive page can render them as a table and
         # identity never depends on reading a colour off a chart.
         "series": {
-            "overlap": [{"round": int(r), "jaccard": round(float(j), 5)}
-                        for r, j in zip(vocab_df["round"], vocab_df["jaccard"])],
+            # Both measures: Dice is plotted, Jaccard is kept so a reader can
+            # check the transform without re-running the pipeline.
+            "overlap": [{"round": int(r), "jaccard": round(float(j), 5),
+                         "dice": round(float(d), 5)}
+                        for r, j, d in zip(vocab_df["round"], vocab_df["jaccard"],
+                                           vocab_df["dice"])],
             "adoption_rate": rate_df.to_dict("records"),
             "spread": [{"round": int(r), "spread": round(float(v), 5)}
                        for r, v in zip(spread_df["round"], spread_df["spread"])],

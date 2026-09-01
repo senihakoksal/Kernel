@@ -75,7 +75,13 @@ def _infer_treatment(control_path: Path) -> Path:
 
 
 def _overlap_trend(vocab_df: pd.DataFrame) -> dict:
-    """Early/late average pairwise overlap (as fractions) for one condition."""
+    """Early/late average pairwise overlap (as fractions) for one condition.
+
+    Reported on JACCARD, not the Dice series the figure plots, so the trend
+    stays comparable with every summary written before Dice was introduced.
+    The two measures move together but are not on the same scale, so anything
+    quoting this number should say which measure it is.
+    """
     early, late, _ = _early_late(vocab_df.sort_values("round")["jaccard"].tolist())
     return {"early": round(early, 4), "late": round(late, 4)}
 
@@ -99,7 +105,7 @@ def main() -> None:
     treat, ctrl = metrics_for_pair(treatment_path, control_path, nlp, embed_model)
 
     treat_trend, ctrl_trend = _overlap_trend(treat["vocab"]), _overlap_trend(ctrl["vocab"])
-    print(f"  vocabulary overlap  treatment {treat_trend['early']*100:.1f}% -> "
+    print(f"  vocabulary overlap (Jaccard)  treatment {treat_trend['early']*100:.1f}% -> "
           f"{treat_trend['late']*100:.1f}% | control {ctrl_trend['early']*100:.1f}% -> "
           f"{ctrl_trend['late']*100:.1f}%")
 
@@ -130,8 +136,11 @@ def main() -> None:
                        "control": len(ctrl["propagated"])},
         # The plotted numbers, for the archive page's data table.
         "series": {
-            "overlap": {c: [{"round": int(r), "jaccard": round(float(j), 5)}
-                            for r, j in zip(m["vocab"]["round"], m["vocab"]["jaccard"])]
+            # Both measures: Dice is plotted, Jaccard is kept for checking.
+            "overlap": {c: [{"round": int(r), "jaccard": round(float(j), 5),
+                             "dice": round(float(d), 5)}
+                            for r, j, d in zip(m["vocab"]["round"], m["vocab"]["jaccard"],
+                                               m["vocab"]["dice"])]
                         for c, m in (("treatment", treat), ("control", ctrl))},
             "adoption_rate": {c: m["rate"].to_dict("records")
                               for c, m in (("treatment", treat), ("control", ctrl))},

@@ -7,6 +7,13 @@ downstream number depends on it, so it was swept rather than assumed.
 Run: <log filename> · 2 artists, 5 critics, 5 rounds · 495 descriptors
 Clustering: agglomerative, cosine, complete linkage
 
+The `overlap` column below is **Jaccard** — |A∩B| / |A∪B| averaged over critic
+pairs. This sweep predates the switch to Dice, 2|A∩B| / (|A|+|B|), as the series
+plotted in row 1 of the figure. Dice reads roughly twice as high on sets this
+sparse, so these numbers are not directly comparable with the figure's; the
+shape of the threshold response is unaffected. Both measures are in the
+per-run summary JSON if you want to re-read the sweep in Dice.
+
 | threshold | clusters | singletons | largest | overlap early→late |
 |---|---|---|---|---|
 | 0.90 | 482 | 469 | 2 | 5.5% → 6.9% (+26%) |

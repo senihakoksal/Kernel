@@ -254,18 +254,26 @@ function dataTable(a, cmp) {
   const num = v => v === null ? "&mdash;" : v.toFixed(3);
   const frac = (u, o) => u === null ? "&mdash;" : u + " / " + o;
   const paired = !!cs;
+  // Both overlap measures are listed: Dice is what row 1 plots, Jaccard is
+  // carried alongside so a reader can check the transform. They are different
+  // averages, not one derived from the other — see vocabulary_convergence().
   const head = paired
-    ? ["round", "overlap (T)", "overlap (C)", "borrowed in use (T)", "borrowed in use (C)",
-       "uses/opps (T)", "uses/opps (C)", "spread (T)", "spread (C)"]
-    : ["round", "overlap", "borrowed in use", "uses / opportunities", "score spread"];
+    ? ["round", "Dice (T)", "Dice (C)", "Jaccard (T)", "Jaccard (C)",
+       "borrowed in use (T)", "borrowed in use (C)", "uses/opps (T)", "uses/opps (C)",
+       "spread (T)", "spread (C)"]
+    : ["round", "overlap — Dice (plotted)", "overlap — Jaccard", "borrowed in use",
+       "uses / opportunities", "score spread"];
   const rows = rounds.map(rnd => {
     if (!paired) {
-      return [rnd, pct(at(s.overlap, rnd, "jaccard")), pct(at(s.adoption_rate, rnd, "rate")),
+      return [rnd, pct(at(s.overlap, rnd, "dice")), pct(at(s.overlap, rnd, "jaccard")),
+              pct(at(s.adoption_rate, rnd, "rate")),
               frac(at(s.adoption_rate, rnd, "uses"), at(s.adoption_rate, rnd, "opportunities")),
               num(at(s.spread, rnd, "spread"))];
     }
     const tr = cs.adoption_rate.treatment, cr = cs.adoption_rate.control;
     return [rnd,
+            pct(at(cs.overlap.treatment, rnd, "dice")),
+            pct(at(cs.overlap.control, rnd, "dice")),
             pct(at(cs.overlap.treatment, rnd, "jaccard")),
             pct(at(cs.overlap.control, rnd, "jaccard")),
             pct(at(tr, rnd, "rate")), pct(at(cr, rnd, "rate")),
@@ -332,7 +340,7 @@ function showRun(i) {
       const early = (a.vocab_trend.early * 100).toFixed(1);
       const late = (a.vocab_trend.late * 100).toFixed(1);
       findings += ` Their shared vocabulary ${a.vocab_trend.pct_change >= 0 ? "grew" : "shrank"}:
-        average pairwise descriptor overlap moved from ${early}% to ${late}%
+        average pairwise descriptor overlap (Jaccard) moved from ${early}% to ${late}%
         (${a.vocab_trend.pct_change >= 0 ? "+" : ""}${a.vocab_trend.pct_change}% relative)
         between the first and last rounds.`;
     }
@@ -359,7 +367,7 @@ function showRun(i) {
             critic isolated &mdash; it sees only the artworks and its <em>own</em> past critiques,
             never another critic's. Same stimulus and priors; the one thing removed is the
             peer-critique channel, so the <strong>gap between the two lines</strong> is the share
-            of convergence that comes from critics reading one another. Vocabulary overlap grew
+            of convergence that comes from critics reading one another. Vocabulary overlap (Jaccard) grew
             from ${(cmp.treatment.early*100).toFixed(1)}% to ${(cmp.treatment.late*100).toFixed(1)}%
             in the baseline but only ${(cmp.control.early*100).toFixed(1)}% to
             ${(cmp.control.late*100).toFixed(1)}% when critics were isolated.</p>
