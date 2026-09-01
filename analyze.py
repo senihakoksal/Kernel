@@ -16,7 +16,7 @@ Pipeline:
      writing, it (or a semantically-similar variant) later appears in a
      DIFFERENT critic's writing.
   6. Output a two-panel plotly figure: vocabulary convergence between critics
-     (avg pairwise Jaccard overlap of their descriptor sets per round) and
+     (avg pairwise Dice overlap of their descriptor sets per round) and
      score spread between critics (std of their scores per round).
 
 Usage:
@@ -256,29 +256,20 @@ def vocabulary_convergence(occ: pd.DataFrame) -> pd.DataFrame:
     """Average pairwise vocabulary overlap between critics, per round.
 
     For each round, take each critic's set of descriptor clusters and compute
-    two overlap measures for every pair of critics, then average each over the
-    pairs. Rising overlap means critics are increasingly reaching for the same
-    descriptors — vocabulary convergence. Rounds with fewer than two critics
-    (no pair to compare) are skipped.
+    the Dice overlap 2|A∩B| / (|A|+|B|) for every pair of critics, then average
+    over the pairs. Rising overlap means critics are increasingly reaching for
+    the same descriptors — vocabulary convergence. Rounds with fewer than two
+    critics (no pair to compare) are skipped.
 
-      jaccard = |A∩B| / |A∪B|
-      dice    = 2|A∩B| / (|A|+|B|)
+    Dice does not penalise the union twice, so on sets this sparse it reads at
+    a scale the eye can actually compare across rounds.
 
-    Both are returned. Dice is what the figure plots — it does not penalise the
-    union twice, so it reads higher on sparse sets like these — while Jaccard is
-    kept in the frame and in the summary JSON so a reader can check the
-    transform for themselves.
-
-    NOTE on the relationship: dice = 2j/(1+j) holds for a single PAIR. It does
-    NOT survive averaging. The transform is concave, so by Jensen's inequality
-    the mean of the per-pair Dice values is at most the transform of the mean
-    Jaccard, with equality only when every pair overlaps identically. On the
-    shipped runs the two differ by 0.07–0.26 percentage points.
-
-    Averaging per pair is the right thing to do — each pair is an observation —
-    so these two columns are genuinely two different averages, not one derived
-    from the other. Do not "simplify" this by computing dice from the averaged
-    jaccard: it would change the number and quietly misreport what was measured.
+    The average is taken over PAIRS — each pair is an observation. Do not
+    shortcut this by averaging some other overlap measure and transforming the
+    result: dice = 2j/(1+j) holds for a single pair but not for an average of
+    pairs, because the transform is concave, so the two differ (by 0.07–0.26
+    percentage points on the shipped runs). tests/test_overlap_measures.py pins
+    both the per-pair identity and the direction of that gap.
     """
     rows = []
     for rnd, grp in occ.groupby("round"):
@@ -286,19 +277,14 @@ def vocabulary_convergence(occ: pd.DataFrame) -> pd.DataFrame:
         critics = list(sets)
         if len(critics) < 2:
             continue
-        pair_jaccard, pair_dice = [], []
+        pair_dice = []
         for i in range(len(critics)):
             for j in range(i + 1, len(critics)):
                 a, b = sets[critics[i]], sets[critics[j]]
-                intersection = len(a & b)
-                union = a | b
                 sizes = len(a) + len(b)
-                pair_jaccard.append(intersection / len(union) if union else 0.0)
-                pair_dice.append(2 * intersection / sizes if sizes else 0.0)
-        rows.append({"round": int(rnd),
-                     "jaccard": sum(pair_jaccard) / len(pair_jaccard),
-                     "dice": sum(pair_dice) / len(pair_dice)})
-    return pd.DataFrame(rows, columns=["round", "jaccard", "dice"])
+                pair_dice.append(2 * len(a & b) / sizes if sizes else 0.0)
+        rows.append({"round": int(rnd), "dice": sum(pair_dice) / len(pair_dice)})
+    return pd.DataFrame(rows, columns=["round", "dice"])
 
 
 def score_spread(scores_df: pd.DataFrame) -> pd.DataFrame:
@@ -768,8 +754,8 @@ def pooled_descriptor_pipeline(
 
     Clustering conditions separately does not produce comparable numbers. Each
     run would get its own cluster structure, and a run with more descriptors can
-    end up with coarser clusters, which mechanically raises its pairwise Jaccard
-    overlap whether or not anything real happened. Jaccard measured in two
+    end up with coarser clusters, which mechanically raises its pairwise
+    overlap whether or not anything real happened. Overlap measured in two
     differently-shaped vocabulary spaces compares the shapes, not the runs.
 
     So both steps that define the space run exactly once over the pooled
@@ -849,13 +835,10 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
 
     vocab_trend = None
     if len(vocab_df) >= 2:
-        early, late, pct = _early_late(vocab_df.sort_values("round")["jaccard"].tolist())
+        early, late, pct = _early_late(vocab_df.sort_values("round")["dice"].tolist())
         vocab_trend = {"early": round(early, 3), "late": round(late, 3),
                        "pct_change": round(pct, 1)}
-        # Jaccard, not the Dice series row 1 plots — say so, or a reader will
-        # try to match this against the figure and fail.
-        print(f"    vocabulary overlap (Jaccard): early {early:.3f} -> "
-              f"late {late:.3f} ({pct:+.0f}%)")
+        print(f"    vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
 
     FIGURE_DIR.mkdir(exist_ok=True)
     fig = make_figure(vocab_df, spread_df, rate_df)
@@ -891,12 +874,8 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         # The plotted numbers, so the archive page can render them as a table and
         # identity never depends on reading a colour off a chart.
         "series": {
-            # Both measures: Dice is plotted, Jaccard is kept so a reader can
-            # check the transform without re-running the pipeline.
-            "overlap": [{"round": int(r), "jaccard": round(float(j), 5),
-                         "dice": round(float(d), 5)}
-                        for r, j, d in zip(vocab_df["round"], vocab_df["jaccard"],
-                                           vocab_df["dice"])],
+            "overlap": [{"round": int(r), "dice": round(float(d), 5)}
+                        for r, d in zip(vocab_df["round"], vocab_df["dice"])],
             "adoption_rate": rate_df.to_dict("records"),
             "spread": [{"round": int(r), "spread": round(float(v), 5)}
                        for r, v in zip(spread_df["round"], spread_df["spread"])],

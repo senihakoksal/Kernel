@@ -34,19 +34,18 @@ def simple_occ():
 
 
 # --- the figure ---------------------------------------------------------------
-def overlap_frame(jaccards: list[float]) -> pd.DataFrame:
-    """Both measures, as vocabulary_convergence() returns them. Row 1 plots Dice."""
-    return pd.DataFrame({"round": list(range(len(jaccards))), "jaccard": jaccards,
-                         "dice": [2 * j / (1 + j) for j in jaccards]})
+def overlap_frame(dice: list[float]) -> pd.DataFrame:
+    """The overlap frame as vocabulary_convergence() returns it: Dice only."""
+    return pd.DataFrame({"round": list(range(len(dice))), "dice": dice})
 
 
 def figure_for(occ, control_occ=None):
-    vocab = overlap_frame([0.05, 0.07, 0.09])
+    vocab = overlap_frame([0.10, 0.13, 0.17])
     spread = pd.DataFrame({"round": [0, 1, 2], "spread": [0.04, 0.05, 0.04]})
     kwargs = {}
     if control_occ is not None:
         kwargs = dict(
-            control_vocab=overlap_frame([0.03, 0.04, 0.05]),
+            control_vocab=overlap_frame([0.06, 0.08, 0.10]),
             control_spread=pd.DataFrame({"round": [0, 1, 2], "spread": [0.05, 0.04, 0.05]}),
             control_rate=adoption_rate(control_occ))
     return make_figure(vocab, spread, adoption_rate(occ), **kwargs)

@@ -1,12 +1,15 @@
-"""Jaccard and Dice, and the relationship between them.
+"""Dice overlap, and its relationship to the Jaccard it replaced.
 
-vocabulary_convergence() returns both measures. Dice is what the figure plots;
-Jaccard is kept so a reader can check the transform. These tests pin the
-transform where it is exact and pin the direction of the error where it is not —
-either way a wrong denominator shows up immediately.
+vocabulary_convergence() reports Dice only. Jaccard is no longer surfaced
+anywhere, so these tests compute it from their own fixtures — the point is to
+pin Dice against an independently-derived reference rather than against another
+column of the same frame. A wrong denominator (|A∪B| instead of |A|+|B|) or a
+dropped factor of 2 shows up immediately either way.
 
     uv run pytest tests/test_overlap_measures.py -v
 """
+
+import itertools
 
 import pandas as pd
 import pytest
@@ -17,6 +20,20 @@ from analyze import vocabulary_convergence
 def occ_frame(rows) -> pd.DataFrame:
     return pd.DataFrame([{"round": r, "critic": c, "descriptor": k, "cluster": k}
                          for r, c, k in rows])
+
+
+def mean_jaccard(occ: pd.DataFrame, rnd: int) -> float:
+    """Average pairwise |A∩B| / |A∪B| for one round, computed here.
+
+    Deliberately independent of analyze.py: the production code no longer
+    reports Jaccard, so this is a reference implementation the assertions can be
+    checked against, not a second reading of the same number.
+    """
+    sets = {c: set(g["cluster"])
+            for c, g in occ[occ["round"] == rnd].groupby("critic")}
+    pairs = [(sets[a], sets[b]) for a, b in itertools.combinations(sorted(sets), 2)]
+    values = [len(a & b) / len(a | b) if (a | b) else 0.0 for a, b in pairs]
+    return sum(values) / len(values)
 
 
 def test_dice_equals_2j_over_1_plus_j_for_a_single_pair():
@@ -36,7 +53,7 @@ def test_dice_equals_2j_over_1_plus_j_for_a_single_pair():
     conv = vocabulary_convergence(occ)
     assert not conv.empty
     for _, row in conv.iterrows():
-        j = row["jaccard"]
+        j = mean_jaccard(occ, int(row["round"]))
         assert row["dice"] == pytest.approx(2 * j / (1 + j), rel=1e-12, abs=1e-12), \
             f"round {row['round']}: dice != 2j/(1+j)"
 
@@ -46,7 +63,7 @@ def test_known_values_for_one_pair():
     occ = occ_frame([(0, "alpha", "glow"), (0, "alpha", "hum"),
                      (0, "beta", "glow"), (0, "beta", "sheen")])
     row = vocabulary_convergence(occ).iloc[0]
-    assert row["jaccard"] == pytest.approx(1 / 3)
+    assert mean_jaccard(occ, 0) == pytest.approx(1 / 3)
     assert row["dice"] == pytest.approx(0.5)
 
 
@@ -65,9 +82,10 @@ def test_averaged_dice_does_not_equal_the_transformed_average():
     ])
     row = vocabulary_convergence(occ).iloc[0]
     # pairs: alpha-beta J=1 D=1; alpha-gamma J=1/3 D=1/2; beta-gamma J=1/3 D=1/2
-    assert row["jaccard"] == pytest.approx(5 / 9)
+    j = mean_jaccard(occ, 0)
+    assert j == pytest.approx(5 / 9)
     assert row["dice"] == pytest.approx(2 / 3)
-    transformed = 2 * row["jaccard"] / (1 + row["jaccard"])   # = 5/7
+    transformed = 2 * j / (1 + j)                             # = 5/7
     assert transformed == pytest.approx(5 / 7)
     assert row["dice"] < transformed, "Jensen's inequality should make averaged Dice smaller"
 
@@ -76,13 +94,16 @@ def test_dice_is_at_least_jaccard():
     """Dice does not penalise the union twice, so it never reads lower."""
     occ = occ_frame([(0, "alpha", "glow"), (0, "beta", "hum"), (0, "gamma", "glow"),
                      (1, "alpha", "glow"), (1, "beta", "glow"), (1, "gamma", "wash")])
-    conv = vocabulary_convergence(occ)
-    assert (conv["dice"] >= conv["jaccard"] - 1e-12).all()
+    for _, row in vocabulary_convergence(occ).iterrows():
+        assert row["dice"] >= mean_jaccard(occ, int(row["round"])) - 1e-12
 
 
-def test_both_columns_are_returned():
+def test_dice_is_the_only_reported_measure():
+    """Jaccard is computed nowhere in the returned frame — Dice is the measure."""
     occ = occ_frame([(0, "alpha", "glow"), (0, "beta", "glow")])
-    assert list(vocabulary_convergence(occ).columns) == ["round", "jaccard", "dice"]
+    columns = list(vocabulary_convergence(occ).columns)
+    assert columns == ["round", "dice"]
+    assert "jaccard" not in columns
 
 
 def test_rounds_with_one_critic_are_skipped():
