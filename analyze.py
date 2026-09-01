@@ -201,9 +201,11 @@ def find_propagation(occ: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     propagated_labels: list[str] = []
     for label, grp in occ.groupby("cluster"):
         first_round = grp["round"].min()
-        first_critic = grp.loc[grp["round"].idxmin(), "critic"]
-        # Did a different critic pick it up at or after first appearance?
-        adopted = grp[(grp["critic"] != first_critic) & (grp["round"] >= first_round)]
+        # Everyone using it in its first round is a co-coiner, not an adopter:
+        # critics within a round run in parallel and cannot read each other.
+        coiners = set(grp.loc[grp["round"] == first_round, "critic"])
+        # Genuine adoption: a critic who did not coin it, in a strictly later round.
+        adopted = grp[(~grp["critic"].isin(coiners)) & (grp["round"] > first_round)]
         if not adopted.empty:
             propagated_labels.append(label)
 
