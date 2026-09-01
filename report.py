@@ -233,6 +233,56 @@ function showArchive() {
   document.getElementById("detail").style.display = "none";
 }
 
+// Accessibility: the figure's numbers as a table. Columns follow what the
+// figure actually plots — the adoption RATE with its uses/opportunities, not a
+// cumulative count, which the figure deliberately does not draw.
+function dataTable(a, cmp) {
+  const s = a && a.series;
+  if (!s) return "";
+  const cs = cmp && cmp.series;                      // paired: both conditions
+  const rounds = [...new Set([
+    ...(s.overlap || []).map(r => r.round),
+    ...(s.adoption_rate || []).map(r => r.round),
+    ...(s.spread || []).map(r => r.round),
+  ])].sort((x, y) => x - y);
+  if (!rounds.length) return "";
+  const at = (rows, rnd, key) => {
+    const hit = (rows || []).find(r => r.round === rnd);
+    return hit === undefined ? null : hit[key];
+  };
+  const pct = v => v === null ? "&mdash;" : (v * 100).toFixed(2) + "%";
+  const num = v => v === null ? "&mdash;" : v.toFixed(3);
+  const frac = (u, o) => u === null ? "&mdash;" : u + " / " + o;
+  const paired = !!cs;
+  const head = paired
+    ? ["round", "overlap (T)", "overlap (C)", "borrowed in use (T)", "borrowed in use (C)",
+       "uses/opps (T)", "uses/opps (C)", "spread (T)", "spread (C)"]
+    : ["round", "overlap", "borrowed in use", "uses / opportunities", "score spread"];
+  const rows = rounds.map(rnd => {
+    if (!paired) {
+      return [rnd, pct(at(s.overlap, rnd, "jaccard")), pct(at(s.adoption_rate, rnd, "rate")),
+              frac(at(s.adoption_rate, rnd, "uses"), at(s.adoption_rate, rnd, "opportunities")),
+              num(at(s.spread, rnd, "spread"))];
+    }
+    const tr = cs.adoption_rate.treatment, cr = cs.adoption_rate.control;
+    return [rnd,
+            pct(at(cs.overlap.treatment, rnd, "jaccard")),
+            pct(at(cs.overlap.control, rnd, "jaccard")),
+            pct(at(tr, rnd, "rate")), pct(at(cr, rnd, "rate")),
+            frac(at(tr, rnd, "uses"), at(tr, rnd, "opportunities")),
+            frac(at(cr, rnd, "uses"), at(cr, rnd, "opportunities")),
+            num(at(cs.spread.treatment, rnd, "spread")),
+            num(at(cs.spread.control, rnd, "spread"))];
+  });
+  return `<details class="datatable"><summary>The figure's numbers as a table</summary>
+    <table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table>
+    <p class="caveat">Dashes at round 0 in the adoption columns are structural: there are no
+    earlier coinages to borrow, so the rate is undefined rather than zero.</p>
+    </details>`;
+}
+
 function showRun(i) {
   const run = RUNS[i];
   const c = counts(run);
@@ -290,9 +340,17 @@ function showRun(i) {
     // With a control, the figure overlays it and this explanation sits above the figure.
     const cmp = run.comparison;
     const figureSrc = cmp ? cmp.figure : a.figure;
-    // Match analyze.py's make_figure(): 1240px with the control's two extra
-    // heatmap panels, 920px without. Plus a little room so nothing clips.
-    const figureHeight = cmp ? 1260 : 940;
+    // Match analyze.py's make_figure(): three stacked panels at 900px.
+    // Plus a little room so nothing clips.
+    const figureHeight = 940;
+    // Supporting figures are separate files, not crammed into the main figure.
+    const supporting = `
+            <p class="supporting">Supporting figures:
+              <a href="../figures/timeline_${esc(run.id)}.html" target="_blank">descriptor adoption timeline &nearr;</a>
+              &middot;
+              <a href="../figures/usage_${esc(run.id)}.html" target="_blank">top-descriptor usage &nearr;</a>
+            </p>`;
+
     const controlBlock = cmp ? `
             <div class="label">Baseline vs. control</div>
             <p>The convergence could have three sources: critics <em>reading each other</em>,
@@ -332,6 +390,12 @@ function showRun(i) {
               <li><strong>Subtract the prior vocabulary.</strong> Remove any descriptor already
                 in the system prompt or an artist/critic disposition (exact match or embedding
                 similarity), so only language coined <em>during</em> the run can count.</li>
+              <li><strong>Measure adoption as a rate, not a count.</strong> Per round, of all
+                the vocabulary a critic could have borrowed from another critic, the share
+                actually in use. A raw count is uninterpretable because the borrowable pool
+                grows every round; a cumulative curve can only rise, so it cannot show whether
+                adoption is building or petering out. Round 0 has an empty pool and is therefore
+                undefined, not zero.</li>
               <li><strong>Cluster near-synonyms.</strong> Group descriptors by sentence-embedding
                 similarity (threshold ${a.threshold}) so paraphrases count as one descriptor.
                 Clustering is agglomerative with complete linkage, so the grouping does not
@@ -351,6 +415,8 @@ function showRun(i) {
             <div class="label">Figure</div>
             <p><a href="${esc(figureSrc)}" target="_blank">open full figure &nearr;</a></p>
             <iframe src="${esc(figureSrc)}" style="height:${figureHeight}px" loading="lazy"></iframe>
+            ${supporting}
+            ${dataTable(a, cmp)}
             <details class="propagated">
               <summary>Propagated descriptors (${a.propagated.length})</summary>
               ${themes}

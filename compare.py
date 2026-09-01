@@ -28,10 +28,10 @@ import pandas as pd
 import spacy
 from sentence_transformers import SentenceTransformer
 
-from analyze import (EMBED_MODEL, SPACY_MODEL, _early_late, critic_evaluations,
-                     make_figure, pooled_descriptor_pipeline, score_spread,
-                     score_trajectories, top_descriptor_usage,
-                     vocabulary_convergence)
+from analyze import (EMBED_MODEL, SPACY_MODEL, _early_late, adoption_rate,
+                     critic_evaluations, find_propagation, make_figure,
+                     make_timeline_figure, pooled_descriptor_pipeline, score_spread,
+                     score_trajectories, vocabulary_convergence)
 
 FIGURE_DIR = Path("figures")
 
@@ -56,8 +56,11 @@ def metrics_for_pair(treatment_path: Path, control_path: Path, nlp,
 
     def metrics(name: str) -> dict:
         occ = by_condition[name]
+        _, propagated = find_propagation(occ)
         return {"vocab": vocabulary_convergence(occ),
                 "spread": score_spread(score_trajectories(evals[name])),
+                "rate": adoption_rate(occ),
+                "propagated": propagated,
                 "occ": occ}
 
     return metrics("treatment"), metrics("control")
@@ -94,8 +97,6 @@ def main() -> None:
     embed_model = SentenceTransformer(EMBED_MODEL)
 
     treat, ctrl = metrics_for_pair(treatment_path, control_path, nlp, embed_model)
-    t_usage, t_top = top_descriptor_usage(treat["occ"], top_n=10)
-    c_usage, c_top = top_descriptor_usage(ctrl["occ"], top_n=10)
 
     treat_trend, ctrl_trend = _overlap_trend(treat["vocab"]), _overlap_trend(ctrl["vocab"])
     print(f"  vocabulary overlap  treatment {treat_trend['early']*100:.1f}% -> "
@@ -106,10 +107,16 @@ def main() -> None:
     # with the control overlaid on the two top panels. Keyed by the TREATMENT
     # run id so report.py can attach it to that run in the archive.
     FIGURE_DIR.mkdir(exist_ok=True)
-    fig = make_figure(treat["vocab"], treat["spread"], t_usage, t_top,
+    fig = make_figure(treat["vocab"], treat["spread"], treat["rate"],
                       control_vocab=ctrl["vocab"], control_spread=ctrl["spread"],
-                      control_usage=c_usage, control_top=c_top)
+                      control_rate=ctrl["rate"])
     fig.write_html(FIGURE_DIR / f"compare_{treatment_path.stem}.html")
+
+    # Supporting figure: the treatment's adoption timeline. Treatment only, per
+    # the figure spec; the control's propagated count is reported alongside.
+    timeline = make_timeline_figure(treat["occ"])
+    if timeline is not None:
+        timeline.write_html(FIGURE_DIR / f"timeline_{treatment_path.stem}.html")
     summary = {
         "treatment_run_id": treatment_path.stem,
         "control_run_id": control_path.stem,
@@ -119,6 +126,19 @@ def main() -> None:
         # only comparable because of it.
         "shared_vocabulary_space": True,
         "n_clusters": int(pd.concat([treat["occ"], ctrl["occ"]])["cluster"].nunique()),
+        "propagated": {"treatment": len(treat["propagated"]),
+                       "control": len(ctrl["propagated"])},
+        # The plotted numbers, for the archive page's data table.
+        "series": {
+            "overlap": {c: [{"round": int(r), "jaccard": round(float(j), 5)}
+                            for r, j in zip(m["vocab"]["round"], m["vocab"]["jaccard"])]
+                        for c, m in (("treatment", treat), ("control", ctrl))},
+            "adoption_rate": {c: m["rate"].to_dict("records")
+                              for c, m in (("treatment", treat), ("control", ctrl))},
+            "spread": {c: [{"round": int(r), "spread": round(float(v), 5)}
+                           for r, v in zip(m["spread"]["round"], m["spread"]["spread"])]
+                       for c, m in (("treatment", treat), ("control", ctrl))},
+        },
     }
     (FIGURE_DIR / f"compare_{treatment_path.stem}.json").write_text(json.dumps(summary, indent=2))
     print(f"Wrote figures/compare_{treatment_path.stem}.html and .json")

@@ -340,6 +340,43 @@ def usage_heatmap(usage_df: pd.DataFrame, top_labels: list[str],
                       colorbar=dict(title="# critics", len=colorbar_len, y=colorbar_y))
 
 
+# --- Palette ----------------------------------------------------------------
+# Validated categorical slots 1 and 2 (adjacent-CVD ΔE 24.7 light / 26.8 dark
+# against a ≥8 target; normal-vision 33.6 / 31.8 against a ≥15 floor; ≥3:1
+# contrast on both surfaces). Do not substitute: the dark values are a selected
+# set of steps, not an automatic inversion of the light ones.
+#
+# A plotly HTML export renders ONE theme — it cannot respond to the reader's
+# prefers-color-scheme the way the archive page can. The light palette is what
+# ships; PALETTE_DARK is kept here so a dark export is a one-line change and the
+# validated pairing is not lost.
+PALETTE_LIGHT = {
+    "treatment": "#2a78d6", "control": "#eb6834", "inherited": "#9a9992",
+    "surface": "#fcfcfb", "text": "#0b0b0b", "text_secondary": "#52514e",
+    "text_muted": "#7c7b76", "grid": "#e6e5e1",
+}
+PALETTE_DARK = {
+    "treatment": "#3987e5", "control": "#d95926", "inherited": "#6d6c66",
+    "surface": "#1a1a19", "text": "#ffffff", "text_secondary": "#c3c2b7",
+    "text_muted": "#94938b", "grid": "#33322f",
+}
+PALETTE = PALETTE_LIGHT
+
+# Region fill opacities, per the figure spec.
+INHERITED_ALPHA = 0.13   # row 1, below the control line
+BAND_ALPHA = 0.17        # rows 1 and 2, between the two conditions
+FALSE_POSITIVE_ALPHA = 0.12  # row 2, below the control line
+
+TREATMENT_NAME = "treatment — critics see each other"
+CONTROL_NAME = "control (isolated) — peer critiques hidden"
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def adoption_rate(occ: pd.DataFrame) -> pd.DataFrame:
     """Share of borrowable vocabulary actually in use, per round.
 
@@ -396,145 +433,307 @@ def adoption_rate(occ: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def _series_marker(color: str) -> dict:
+    """≥8px markers ringed in the surface colour so overlaps stay legible."""
+    return dict(size=9, color=color, line=dict(width=2, color=PALETTE["surface"]))
 
-CONTROL_COLOR = "#b06c3f"  # copper — isolated-critic control lines
+
+def _panel_heading(fig, row: int, title: str, definition: str) -> None:
+    """Panel title plus a muted one-line definition of what the y value counts.
+
+    Domain-referenced so both stay pinned to their panel regardless of how the
+    row heights or tick label widths change.
+    """
+    axis = "" if row == 1 else str(row)
+    for text, shift, size, color, weight in (
+        (title, 27, 12.5, PALETTE["text"], "bold"),
+        (definition, 11, 10.5, PALETTE["text_muted"], "normal"),
+    ):
+        fig.add_annotation(
+            text=f"<b>{text}</b>" if weight == "bold" else text,
+            xref=f"x{axis} domain", x=0, xanchor="left",
+            yref=f"y{axis} domain", y=1, yanchor="bottom", yshift=shift,
+            showarrow=False, font=dict(size=size, color=color),
+        )
+
+
+def _region_label(fig, row: int, x, y, text: str) -> None:
+    """Region annotation in text ink — never the series colour."""
+    fig.add_annotation(x=x, y=y, text=text, showarrow=False, row=row, col=1,
+                       font=dict(size=11.5, color=PALETTE["text_secondary"]),
+                       bgcolor=_rgba(PALETTE["surface"], 0.55), borderpad=2)
+
+
+def _midpoint_label_position(upper: pd.DataFrame, lower: pd.DataFrame | None,
+                             xcol: str, ycol: str, scale: float = 1.0):
+    """A point inside a shaded region: middle round, halfway up the band.
+
+    Placing labels at the band's midpoint rather than a fixed coordinate is what
+    keeps them off the lines when the data changes.
+    """
+    if upper.empty:
+        return None
+    rounds = sorted(upper[xcol])
+    x = rounds[len(rounds) // 2]
+    top = float(upper.loc[upper[xcol] == x, ycol].iloc[0]) * scale
+    if lower is None:
+        return x, top / 2
+    match = lower.loc[lower[xcol] == x, ycol]
+    if match.empty:
+        return None
+    return x, (top + float(match.iloc[0]) * scale) / 2
 
 
 def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
-                usage_df: pd.DataFrame, top_labels: list[str],
+                rate_df: pd.DataFrame,
                 control_vocab: pd.DataFrame | None = None,
                 control_spread: pd.DataFrame | None = None,
-                control_usage: pd.DataFrame | None = None,
-                control_top: list[str] | None = None) -> go.Figure:
-    """Two convergence panels on top, a top-descriptor usage heatmap below.
+                control_rate: pd.DataFrame | None = None) -> go.Figure:
+    """Three stacked panels on one shared x-axis: shared vocabulary, borrowed
+    vocabulary in use, and score spread.
 
-    Top-left: average pairwise Jaccard overlap of critics' descriptor sets per
-    round (rising = converging vocabulary), with dashed early/late reference
-    lines. Top-right: std of critics' scores per round (falling = agreeing more
-    on quality). Bottom: the 10 most-used descriptors × round, colored by how
-    many critics used each that round.
+    The argument runs down the column. Row 1: how much vocabulary critics share,
+    split into what they shared without ever reading each other and what peer
+    visibility added. Row 2: how much of the borrowable vocabulary was actually
+    in use — overlap alone cannot answer the research question, because critics
+    judging the same artworks share vocabulary by coincidence with no influence
+    involved. Row 3: whether judgment moved with the vocabulary.
 
-    If control_vocab / control_spread are given (the isolated-critic control),
-    they are overlaid as copper lines on the two top panels and a legend is
-    shown distinguishing baseline from control.
+    Rows 1 and 2 carry shaded bands with the same meaning, so a reader learns
+    the grammar once. Row 3 deliberately carries NO band: there is no consistent
+    gap between the conditions there, and shading an inconsistent gap as though
+    it were an effect would be a lie. The eye should read effect, effect,
+    nothing. Removing that asymmetry "for consistency" is a regression.
+
+    The panels share one x-axis object rather than merely matching ranges — if
+    they only matched, alignment would drift the moment a y tick label changed
+    width, and reading vertically down a round is the whole point.
     """
-    has_control = control_vocab is not None
-    base_name = "baseline" if has_control else None
-    # A second heatmap row appears only when the control's descriptors are given.
-    two_heatmaps = has_control and control_top is not None
-
-    if two_heatmaps:
-        fig = make_subplots(
-            rows=3, cols=2,
-            row_heights=[0.34, 0.33, 0.33],
-            vertical_spacing=0.12, horizontal_spacing=0.13,
-            specs=[[{}, {}], [{"colspan": 2}, None], [{"colspan": 2}, None]],
-            subplot_titles=(
-                "Vocabulary convergence", "Score spread (lower = agreement)",
-                "Baseline — top 10 descriptors, critics using each by round",
-                "Control (isolated) — top 10 descriptors, critics using each by round",
-            ),
-        )
-    else:
-        fig = make_subplots(
-            rows=2, cols=2,
-            row_heights=[0.45, 0.55],
-            vertical_spacing=0.16, horizontal_spacing=0.13,
-            specs=[[{}, {}], [{"colspan": 2}, None]],
-            subplot_titles=(
-                "Vocabulary convergence",
-                "Score spread (lower = agreement)",
-                "Top 10 descriptors — critics using each, by round",
-            ),
-        )
-
-    # Left panel: vocabulary overlap as a percentage, with early/late lines.
-    vocab_df = vocab_df.sort_values("round")
-    fig.add_trace(
-        go.Scatter(x=vocab_df["round"], y=vocab_df["jaccard"] * 100, mode="lines+markers",
-                   name=base_name, legendgroup="baseline", showlegend=has_control,
-                   line=dict(color="#3b4cb8", width=2.5), marker=dict(size=9),
-                   hovertemplate="round %{x}: %{y:.1f}%<extra>baseline</extra>"),
-        row=1, col=1,
+    has_control = control_vocab is not None and not control_vocab.empty
+    fig = make_subplots(
+        rows=3, cols=1, shared_xaxes=True,
+        vertical_spacing=0.11, row_heights=[0.42, 0.31, 0.27],
     )
+
+    # --- Row 1: shared vocabulary -------------------------------------------
+    # Trace order is load-bearing: the control is added first with fill to zero,
+    # then the treatment fills "tonexty" — to the previous trace — which yields
+    # exactly the two regions with no double counting.
+    vocab_df = vocab_df.sort_values("round")
     if has_control:
         cv = control_vocab.sort_values("round")
         fig.add_trace(
             go.Scatter(x=cv["round"], y=cv["jaccard"] * 100, mode="lines+markers",
-                       name="control (isolated)", legendgroup="control",
-                       line=dict(color=CONTROL_COLOR, width=2.5), marker=dict(size=9),
-                       hovertemplate="round %{x}: %{y:.1f}%<extra>control</extra>"),
-            row=1, col=1,
-        )
-    elif len(vocab_df) >= 2:
-        # Reference lines only in the solo view; they'd clutter the overlay.
-        early, late, pct = _early_late(vocab_df["jaccard"].tolist())
-        fig.add_hline(y=early * 100, line_dash="dash", line_color="#9aa0a6", line_width=1,
-                      annotation_text=f"early avg {early * 100:.1f}%",
-                      annotation_position="bottom left",
-                      annotation_font=dict(color="#9aa0a6"), row=1, col=1)
-        fig.add_hline(y=late * 100, line_dash="dash", line_color="#9aa0a6", line_width=1,
-                      annotation_text=f"late avg {late * 100:.1f}% ({pct:+.0f}% relative)",
-                      annotation_position="top left",
-                      annotation_font=dict(color="#3b4cb8"), row=1, col=1)
+                       name=CONTROL_NAME, legendgroup="control", legendrank=2,
+                       fill="tozeroy", fillcolor=_rgba(PALETTE["inherited"], INHERITED_ALPHA),
+                       line=dict(color=PALETTE["control"], width=2),
+                       marker=_series_marker(PALETTE["control"]),
+                       hovertemplate="%{y:.1f}%<extra>control</extra>"),
+            row=1, col=1)
+    fig.add_trace(
+        go.Scatter(x=vocab_df["round"], y=vocab_df["jaccard"] * 100, mode="lines+markers",
+                   name=TREATMENT_NAME, legendgroup="treatment", legendrank=1,
+                   fill="tonexty" if has_control else None,
+                   fillcolor=_rgba(PALETTE["treatment"], BAND_ALPHA) if has_control else None,
+                   line=dict(color=PALETTE["treatment"], width=2),
+                   marker=_series_marker(PALETTE["treatment"]),
+                   hovertemplate="%{y:.1f}%<extra>treatment</extra>"),
+        row=1, col=1)
+
+    if has_control:
+        band = _midpoint_label_position(vocab_df, control_vocab, "round", "jaccard", 100)
+        if band:
+            _region_label(fig, 1, band[0], band[1], "added by peer visibility")
+        inherited = _midpoint_label_position(control_vocab, None, "round", "jaccard", 100)
+        if inherited:
+            _region_label(fig, 1, inherited[0], inherited[1],
+                          "shared without contact — inherited from the model")
+
     fig.update_yaxes(title_text="avg pairwise overlap", ticksuffix="%",
                      rangemode="tozero", row=1, col=1)
-    fig.update_xaxes(title_text="round", row=1, col=1)
+    _panel_heading(fig, 1, "Vocabulary shared between critics",
+                   "share of descriptor vocabulary two critics have in common, "
+                   "averaged over all critic pairs")
 
-    # Right panel: score spread per round.
-    spread_df = spread_df.sort_values("round")
-    fig.add_trace(
-        go.Scatter(x=spread_df["round"], y=spread_df["spread"], mode="lines+markers",
-                   name=base_name, legendgroup="baseline", showlegend=False,
-                   line=dict(color="#3b4cb8" if has_control else "#8a4b2f", width=2.5),
-                   marker=dict(size=9)),
-        row=1, col=2,
-    )
-    if control_spread is not None:
+    # --- Row 2: borrowed vocabulary in use ----------------------------------
+    rate_df = rate_df.sort_values("round") if not rate_df.empty else rate_df
+    if has_control and control_rate is not None and not control_rate.empty:
+        cr = control_rate.sort_values("round")
+        fig.add_trace(
+            go.Scatter(x=cr["round"], y=cr["rate"] * 100, mode="lines+markers",
+                       name=CONTROL_NAME, legendgroup="control", showlegend=False,
+                       fill="tozeroy",
+                       fillcolor=_rgba(PALETTE["control"], FALSE_POSITIVE_ALPHA),
+                       line=dict(color=PALETTE["control"], width=2),
+                       marker=_series_marker(PALETTE["control"]),
+                       customdata=cr[["uses", "opportunities"]].to_numpy(),
+                       hovertemplate="%{y:.2f}%  (%{customdata[0]} of "
+                                     "%{customdata[1]})<extra>control</extra>"),
+            row=2, col=1)
+    # A control that never adopts anything is NOT absent from this panel: it
+    # reaches adoption_rate() with a real denominator and comes back as a row of
+    # 0.0, so the branch above draws a flat line along the axis. An absent line
+    # would read as missing data rather than as a null result. control_rate is
+    # empty only when opportunities were 0 — the rate undefined, not zero — and
+    # fabricating zeros there would invent a measurement.
+    if not rate_df.empty:
+        fig.add_trace(
+            go.Scatter(x=rate_df["round"], y=rate_df["rate"] * 100, mode="lines+markers",
+                       name=TREATMENT_NAME, legendgroup="treatment", showlegend=False,
+                       fill="tonexty" if has_control else None,
+                       fillcolor=_rgba(PALETTE["treatment"], BAND_ALPHA) if has_control else None,
+                       line=dict(color=PALETTE["treatment"], width=2),
+                       marker=_series_marker(PALETTE["treatment"]),
+                       customdata=rate_df[["uses", "opportunities"]].to_numpy(),
+                       hovertemplate="%{y:.2f}%  (%{customdata[0]} of "
+                                     "%{customdata[1]})<extra>treatment</extra>"),
+            row=2, col=1)
+        if has_control and control_rate is not None and not control_rate.empty:
+            band = _midpoint_label_position(rate_df, control_rate, "round", "rate", 100)
+            if band:
+                _region_label(fig, 2, band[0], band[1], "genuine adoption")
+            fp = _midpoint_label_position(control_rate, None, "round", "rate", 100)
+            if fp:
+                _region_label(fig, 2, fp[0], fp[1], "false positives")
+
+    fig.update_yaxes(title_text="borrowed vocabulary in use", ticksuffix="%",
+                     rangemode="tozero", row=2, col=1)
+    _panel_heading(fig, 2, "Borrowed vocabulary in use, per round",
+                   "of all the vocabulary a critic could have borrowed from others, "
+                   "the share actually in use that round")
+    # The left edge carries the structural gap, so the missing round 0 does not
+    # read as missing data.
+    fig.add_annotation(xref="x2 domain", x=0.005, xanchor="left",
+                       yref="y2 domain", y=0.04, yanchor="bottom",
+                       text="round 0: no earlier<br>coinages to adopt",
+                       showarrow=False, align="left",
+                       font=dict(size=10.5, color=PALETTE["text_muted"]))
+
+    # --- Row 3: score spread, deliberately unshaded -------------------------
+    if has_control and control_spread is not None and not control_spread.empty:
         cs = control_spread.sort_values("round")
         fig.add_trace(
             go.Scatter(x=cs["round"], y=cs["spread"], mode="lines+markers",
-                       name="control (isolated)", legendgroup="control", showlegend=False,
-                       line=dict(color=CONTROL_COLOR, width=2.5), marker=dict(size=9)),
-            row=1, col=2,
-        )
+                       name=CONTROL_NAME, legendgroup="control", showlegend=False,
+                       line=dict(color=PALETTE["control"], width=2),
+                       marker=_series_marker(PALETTE["control"]),
+                       hovertemplate="%{y:.3f}<extra>control</extra>"),
+            row=3, col=1)
+    spread_df = spread_df.sort_values("round")
+    fig.add_trace(
+        go.Scatter(x=spread_df["round"], y=spread_df["spread"], mode="lines+markers",
+                   name=TREATMENT_NAME, legendgroup="treatment", showlegend=False,
+                   line=dict(color=PALETTE["treatment"], width=2),
+                   marker=_series_marker(PALETTE["treatment"]),
+                   hovertemplate="%{y:.3f}<extra>treatment</extra>"),
+        row=3, col=1)
     fig.update_yaxes(title_text="std of the critics' scores", rangemode="tozero",
-                     row=1, col=2)
-    fig.update_xaxes(title_text="round", row=1, col=2)
+                     row=3, col=1)
+    _panel_heading(fig, 3, "Score spread (lower = agreement)",
+                   "standard deviation of the critics' mean scores that round")
 
-    # Heatmap panel(s): top-descriptor usage (descriptor × round → #critics).
-    # Baseline in blue; when a control is present, its descriptors go in a
-    # second copper heatmap below.
-    base_cbar_y = 0.30 if two_heatmaps else 0.22
-    heatmap = usage_heatmap(usage_df, top_labels, colorscale="Blues",
-                            colorbar_y=base_cbar_y, colorbar_len=0.3 if two_heatmaps else 0.45)
-    if heatmap is not None:
-        fig.add_trace(heatmap, row=2, col=1)
-    else:
-        fig.add_annotation(text="No descriptors to rank.", xref="x domain",
-                           yref="y domain", x=0.5, y=0.5, showarrow=False,
-                           row=2, col=1)
-    fig.update_xaxes(title_text="round", row=2, col=1)
+    # --- Shared axis and chrome ---------------------------------------------
+    fig.update_xaxes(dtick=1, showgrid=False, showspikes=True, spikemode="across",
+                     spikethickness=1, spikecolor=PALETTE["text_muted"], spikedash="dot")
+    fig.update_xaxes(title_text="round", row=3, col=1)
+    fig.update_yaxes(showgrid=True, gridcolor=PALETTE["grid"], zeroline=False,
+                     title_font=dict(size=11, color=PALETTE["text_secondary"]),
+                     tickfont=dict(size=11, color=PALETTE["text_muted"]))
 
-    if two_heatmaps:
-        ctrl_heatmap = usage_heatmap(control_usage, control_top, colorscale="Oranges",
-                                     colorbar_y=-0.02, colorbar_len=0.3)
-        if ctrl_heatmap is not None:
-            fig.add_trace(ctrl_heatmap, row=3, col=1)
-        fig.update_xaxes(title_text="round", row=3, col=1)
+    layout = dict(
+        height=900, plot_bgcolor=PALETTE["surface"], paper_bgcolor=PALETTE["surface"],
+        font=dict(family="ui-sans-serif, -apple-system, Segoe UI, Helvetica, Arial, sans-serif",
+                  color=PALETTE["text"]),
+        # A crosshair spanning all three panels is what turns three stacked
+        # charts into one figure.
+        hovermode="x unified", hoversubplots="axis",
+        # Top margin carries three stacked bands: legend, panel title, definition
+        # line. The legend sits well clear of row 1's heading — at a smaller gap
+        # the two collide, since the heading is pinned to the panel domain while
+        # the legend is pinned to the paper.
+        margin=dict(l=96, r=32, t=145, b=56),
+        legend=dict(orientation="h", y=1.09, yanchor="bottom", x=0, xanchor="left",
+                    font=dict(size=12, color=PALETTE["text_secondary"]),
+                    bgcolor="rgba(0,0,0,0)"),
+        showlegend=has_control,
+    )
+    fig.update_layout(**layout)
+    fig.update_xaxes(tickfont=dict(size=11, color=PALETTE["text_muted"]),
+                     title_font=dict(size=11, color=PALETTE["text_secondary"]))
+    return fig
 
-    title = ("Observation kernel — baseline vs. control" if has_control
-             else "Observation kernel — convergence between critics")
-    # Extra top margin so the title, legend, and the two subplot titles each get
-    # their own band instead of stacking on top of one another.
+
+def make_timeline_figure(occ: pd.DataFrame, top_n: int = 12) -> go.Figure | None:
+    """Descriptor adoption timeline — a supporting figure, deliberately separate.
+
+    Rows are the most-propagated clusters, x is round, one mark per
+    (cluster, round, critic) usage. A FILLED mark is a coinage; a HOLLOW ringed
+    mark is adoption by a critic who did not coin it — coined-vs-adopted is the
+    distinction that matters, so it gets the visual channel. Critic identity
+    rides as text initials beside the mark, not as colour: five categorical hues
+    cannot pass the all-pairs colourblind floor in a dot plot.
+
+    Returns None when nothing propagated.
+    """
+    if occ.empty:
+        return None
+    first_round, coiners = {}, {}
+    for cluster, grp in occ.groupby("cluster"):
+        fr = grp["round"].min()
+        first_round[cluster] = fr
+        coiners[cluster] = set(grp.loc[grp["round"] == fr, "critic"])
+
+    adopters = {k: set(occ[(occ["cluster"] == k) & (occ["round"] > first_round[k])]["critic"])
+                - coiners[k] for k in first_round}
+    ranked = sorted((k for k in first_round if adopters[k]),
+                    key=lambda k: (-len(adopters[k]), first_round[k], k))[:top_n]
+    if not ranked:
+        return None
+
+    order = list(reversed(ranked))               # most-adopted at the top
+    y_of = {k: i for i, k in enumerate(order)}
+    coin_x, coin_y, coin_t, adopt_x, adopt_y, adopt_t = [], [], [], [], [], []
+    for (cluster, rnd), grp in occ[occ["cluster"].isin(ranked)].groupby(["cluster", "round"]):
+        critics = sorted(grp["critic"].unique())
+        # Spread co-users of the same round vertically so marks do not overlap.
+        offsets = [(i - (len(critics) - 1) / 2) * 0.18 for i in range(len(critics))]
+        for critic, off in zip(critics, offsets):
+            initials = "".join(part[0] for part in critic.split("_"))[:2].upper()
+            if critic in coiners[cluster] and rnd == first_round[cluster]:
+                coin_x.append(rnd); coin_y.append(y_of[cluster] + off); coin_t.append(initials)
+            else:
+                adopt_x.append(rnd); adopt_y.append(y_of[cluster] + off); adopt_t.append(initials)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=coin_x, y=coin_y, mode="markers+text", text=coin_t, textposition="middle right",
+        textfont=dict(size=9, color=PALETTE["text_muted"]), name="coined",
+        marker=dict(size=11, color=PALETTE["treatment"],
+                    line=dict(width=2, color=PALETTE["surface"])),
+        hovertemplate="round %{x} — coined<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=adopt_x, y=adopt_y, mode="markers+text", text=adopt_t, textposition="middle right",
+        textfont=dict(size=9, color=PALETTE["text_muted"]), name="adopted (did not coin)",
+        marker=dict(size=11, color=PALETTE["surface"],
+                    line=dict(width=2, color=PALETTE["treatment"])),
+        hovertemplate="round %{x} — adopted<extra></extra>"))
+
+    ticks = [f"“{k[:38]}{'…' if len(k) > 38 else ''}”" for k in order]
     fig.update_layout(
-        height=1240 if two_heatmaps else 920, plot_bgcolor="white",
-        title=dict(text=title, y=0.99, yanchor="top"),
-        margin=dict(t=150 if has_control else 110),
-        legend=dict(orientation="h", y=1.09, yanchor="bottom", x=0.5, xanchor="center")
-        if has_control else {})
-    fig.update_xaxes(showgrid=True, gridcolor="#eee", row=1)
-    fig.update_yaxes(showgrid=True, gridcolor="#eee", row=1)
+        height=max(320, 46 * len(order) + 150),
+        plot_bgcolor=PALETTE["surface"], paper_bgcolor=PALETTE["surface"],
+        font=dict(color=PALETTE["text"]),
+        title=dict(text="<b>Descriptor adoption timeline</b>", x=0, xanchor="left",
+                   font=dict(size=13)),
+        margin=dict(l=300, r=40, t=90, b=56),
+        legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0, xanchor="left",
+                    font=dict(size=11, color=PALETTE["text_secondary"])))
+    fig.update_xaxes(title_text="round", dtick=1, showgrid=True, gridcolor=PALETTE["grid"],
+                     tickfont=dict(size=11, color=PALETTE["text_muted"]))
+    fig.update_yaxes(tickmode="array", tickvals=list(range(len(order))), ticktext=ticks,
+                     showgrid=True, gridcolor=PALETTE["grid"],
+                     tickfont=dict(size=10, color=PALETTE["text_secondary"]),
+                     range=[-0.6, len(order) - 0.4])
     return fig
 
 
@@ -618,6 +817,7 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
     scores_df = score_trajectories(critic_evals)
     vocab_df = vocabulary_convergence(occ)
     spread_df = score_spread(scores_df)
+    rate_df = adoption_rate(occ)
     usage_df, top_labels = top_descriptor_usage(occ, top_n=10)
 
     print(f"  {log_path.stem}: {occ['cluster'].nunique()} descriptor clusters; "
@@ -631,9 +831,25 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         print(f"    vocabulary overlap: early {early:.3f} -> late {late:.3f} ({pct:+.0f}%)")
 
     FIGURE_DIR.mkdir(exist_ok=True)
-    fig = make_figure(vocab_df, spread_df, usage_df, top_labels)
+    fig = make_figure(vocab_df, spread_df, rate_df)
     fig_path = FIGURE_DIR / f"analysis_{log_path.stem}.html"
     fig.write_html(fig_path)
+
+    # Supporting figures live in their own files rather than being crammed into
+    # the main one: the adoption timeline, and the top-descriptor usage heatmap
+    # the three-panel figure no longer carries.
+    timeline = make_timeline_figure(occ)
+    if timeline is not None:
+        timeline.write_html(FIGURE_DIR / f"timeline_{log_path.stem}.html")
+    heatmap = usage_heatmap(usage_df, top_labels)
+    if heatmap is not None:
+        go.Figure(heatmap).update_layout(
+            height=max(320, 34 * len(top_labels) + 140),
+            title=dict(text="<b>Top descriptors — critics using each, by round</b>",
+                       x=0, xanchor="left", font=dict(size=13)),
+            plot_bgcolor=PALETTE["surface"], paper_bgcolor=PALETTE["surface"],
+            margin=dict(l=300, r=40, t=80, b=56),
+        ).write_html(FIGURE_DIR / f"usage_{log_path.stem}.html")
     summary = {
         "run_id": log_path.stem,
         "n_clusters": int(occ["cluster"].nunique()),
@@ -645,6 +861,15 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         "vocab_trend": vocab_trend,
         # None for a standalone analysis; the paired run id when clustered jointly.
         "pooled_with": pooled_with,
+        # The plotted numbers, so the archive page can render them as a table and
+        # identity never depends on reading a colour off a chart.
+        "series": {
+            "overlap": [{"round": int(r), "jaccard": round(float(j), 5)}
+                        for r, j in zip(vocab_df["round"], vocab_df["jaccard"])],
+            "adoption_rate": rate_df.to_dict("records"),
+            "spread": [{"round": int(r), "spread": round(float(v), 5)}
+                       for r, v in zip(spread_df["round"], spread_df["spread"])],
+        },
     }
     summary_path = FIGURE_DIR / f"analysis_{log_path.stem}.json"
     summary_path.write_text(json.dumps(summary, indent=2))
