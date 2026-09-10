@@ -34,7 +34,7 @@ Always reply with a single JSON object and nothing else. Use these keys:
   - "reasoning": one or two sentences on why, as a string.
   - "score":     critics only — a number from 0.0 to 1.0 rating the concept(s). Omit if you are an artist.
 
-Keep "content" under 200 words — concepts and critiques alike are short by design.
+Keep "content" between 80 and 180 words — concepts and critiques alike are short by design.
 Do not wrap the JSON in markdown fences. Do not add commentary outside the JSON.
 """
 
