@@ -43,7 +43,8 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
-from agents import FEED_WINDOW, UsageTally, evaluation_round_bounds
+from agents import (FEED_WINDOW, UsageTally, evaluation_round_bounds,
+                    prewarm_cache)
 # Reuse the run machinery verbatim so the control behaves identically except for
 # the feed each critic sees.
 from run import (LOG_DIR, MAX_CONCURRENT, append_records, load_agents,
@@ -198,10 +199,14 @@ async def run_control(treatment_path: Path,
         # Each critic critiques each artwork of this round, in parallel, from its
         # own isolated feed. Critics never see this round's critiques (own or
         # peer), matching the treatment's within-round parallelism.
+        # Each isolated critic has its OWN feed, so there is no shared block to
+        # warm across critics — but a critic's own feed IS shared across the
+        # artworks it critiques this round, which is where the writes pile up.
         tasks = []
         for critic in critics:
             feed = isolated_feed(concepts_by_round, own_critiques, rounds, r,
                                  critic.name, feed_window)
+            await prewarm_cache(client, feed, r, tally)
             tasks.extend(throttled(sem, critic.act(r, feed, concept)) for concept in concepts)
         new_critiques = await asyncio.gather(*tasks)
         append_records(list(new_critiques), written, log_path)

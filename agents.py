@@ -114,6 +114,56 @@ def format_feed(feed: list[Record]) -> str:
     return "\n".join(lines)
 
 
+# --- The cached prefix --------------------------------------------------------
+# Every agent in a phase sends an identical system block and feed block, and
+# both carry a cache breakpoint. These two builders are the single definition of
+# that prefix: Agent.act sends it, prewarm_cache() warms it, and if they were
+# built separately a one-character drift would silently stop every cache hit
+# without failing anything. tests/test_prewarm.py pins them byte-for-byte.
+def system_blocks() -> list[dict]:
+    return [{"type": "text", "text": SHARED_SYSTEM_PROMPT,
+             "cache_control": {"type": "ephemeral"}}]
+
+
+def feed_block(feed: list[Record]) -> dict:
+    return {"type": "text", "text": f"Studio so far:\n{format_feed(feed)}",
+            "cache_control": {"type": "ephemeral"}}
+
+
+async def prewarm_cache(client: AsyncAnthropic, feed: list[Record], round_idx: int,
+                        tally: "Optional[UsageTally]" = None) -> bool:
+    """Write the shared feed block into the prompt cache with one call.
+
+    Without this, a phase's calls all fire at once, all miss the cache, and all
+    WRITE it — so the layout that was supposed to cost one write plus N-1 reads
+    costs min(N, MAX_CONCURRENT) writes instead. Measured on the 8-round 6x6 run
+    of 2026-09-10: with MAX_CONCURRENT equal to the artist count, the artist
+    phase got no caching at all, cache writes came to 71% of the bill, and about
+    55% of the run's cost was redundant writes.
+
+    One max_tokens=0 request sends the prefix and generates nothing, so the
+    block is cached once and the real calls read it — which decouples cache
+    efficiency from concurrency instead of trading one against the other.
+
+    Never raises. A failed pre-warm costs cache efficiency, not the run, and a
+    run that dies because an optimisation failed is a worse outcome than a run
+    that is billed badly. Returns whether the call went through.
+    """
+    try:
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=0,                       # verified accepted; generates nothing
+            system=system_blocks(),
+            messages=[{"role": "user", "content": [feed_block(feed)]}],
+        )
+    except Exception as exc:                    # noqa: BLE001 - deliberately broad
+        print(f"    (cache pre-warm failed, continuing: {type(exc).__name__})")
+        return False
+    if tally is not None:
+        tally.add(round_idx, response.usage)
+    return True
+
+
 # --- Robust JSON extraction ---------------------------------------------------
 def _extract_json(text: str) -> dict:
     """Pull the first JSON object out of Claude's text and parse it.
@@ -242,7 +292,6 @@ class Agent:
         # (This is why the disposition sits in the user message, after the
         # feed, instead of in the system prompt: any per-agent text before the
         # feed would break the shared cache prefix.)
-        feed_block = f"Studio so far:\n{format_feed(feed)}"
         agent_block = (
             f"Your disposition: {self.disposition}\n\n"
             f"{self._task_instruction(target)}"
@@ -258,11 +307,9 @@ class Agent:
             response = await self.client.messages.create(
                 model=MODEL,
                 max_tokens=800,
-                system=[{"type": "text", "text": SHARED_SYSTEM_PROMPT,
-                         "cache_control": {"type": "ephemeral"}}],
+                system=system_blocks(),
                 messages=[{"role": "user", "content": [
-                    {"type": "text", "text": feed_block,
-                     "cache_control": {"type": "ephemeral"}},
+                    feed_block(feed),
                     {"type": "text", "text": agent_block},
                 ]}],
             )

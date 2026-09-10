@@ -33,7 +33,8 @@ import yaml
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
-from agents import FEED_WINDOW, MODEL, Agent, UsageTally, windowed_feed
+from agents import (FEED_WINDOW, MODEL, Agent, UsageTally, prewarm_cache,
+                    windowed_feed)
 from schema import Record
 
 # Defaults — overridable on the command line. Never hardcoded inside the loop.
@@ -41,18 +42,21 @@ DEFAULT_ROUNDS = 4
 AGENTS_FILE = Path("agents.yaml")
 LOG_DIR = Path("logs")
 
-# Max Claude calls in flight at once. Large rosters can otherwise burst past
-# the API's rate limits (starter tier: 50 requests/min and 8,000 output
-# tokens/min; the bucket counts each call's max_tokens, not what a call
-# actually returns).
+# Max Claude calls in flight at once. Large rosters can otherwise burst past the
+# API's rate limits, so this stays a bounded pipe rather than firing a whole
+# phase at the API.
 #
-# That output bucket is the hard ceiling: 8,000 / max_tokens = 10 calls/min at
-# max_tokens=800, whatever the concurrency. A 5-round 2x5 run measured ~3.8
-# calls/min at MAX_CONCURRENT=3 — well under the ceiling, so the run was
-# latency-bound rather than limit-bound, and widening the pipe buys real
-# wall-clock. Past the ceiling nothing errors: requests just 429, the SDK backs
-# off and retries, and throughput flattens while individual calls stall. If the
-# console shows retry delays, come back down.
+# Measured, 8-round 6x6 run of 2026-09-10 at MAX_CONCURRENT=6: ~19 calls/min
+# sustained with zero 429s, zero retries. An earlier note here claimed a hard
+# ceiling of 10 calls/min from an 8,000-output-tokens/min bucket; that run
+# exceeded it comfortably, so whatever bounds this account is higher than that.
+# Latency, not the rate limit, is what this constant trades against.
+#
+# Concurrency used to trade against cache efficiency: N calls firing together
+# all miss the shared feed block and all write it, and that cost 55% of the same
+# run. agents.prewarm_cache() now writes the block once before each phase, so
+# raising this no longer buys speed at the cache's expense. If the console shows
+# retry delays or 429s, come back down.
 MAX_CONCURRENT = 6
 
 
@@ -157,7 +161,10 @@ async def run(rounds: int, feed_window: int = FEED_WINDOW) -> Path:
         # untouched: act() still receives a plain list and renders it as-is.
         #
         # 1) Artists each invent one concept, in parallel. They see the feed.
+        #    Warm the cache first: all six fire at once and would otherwise all
+        #    miss and all write the same block.
         artist_feed = windowed_feed(feed, round_idx, feed_window)
+        await prewarm_cache(client, artist_feed, round_idx, tally)
         new_concepts = await asyncio.gather(
             *(throttled(sem, a.act(round_idx, artist_feed)) for a in artists)
         )
@@ -171,6 +178,7 @@ async def run(rounds: int, feed_window: int = FEED_WINDOW) -> Path:
         critic_feed = windowed_feed(feed, round_idx, feed_window)
         log_size = len(feed)   # before this round's critiques land, so the
                                # visible/total ratio below compares like for like
+        await prewarm_cache(client, critic_feed, round_idx, tally)
         evaluations = await asyncio.gather(
             *(throttled(sem, c.act(round_idx, critic_feed, concept))
               for c in critics for concept in new_concepts)
