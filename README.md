@@ -17,8 +17,12 @@ converge or split?
 
 - **`run.py`** runs the round loop. Each round, all artists propose one concept
   each (in parallel via `asyncio.gather`), then all critics evaluate this
-  round's concepts (also in parallel), seeing the full prior feed. Every action
-  is logged as one JSON line to `logs/run_<timestamp>.jsonl`.
+  round's concepts (also in parallel). Agents see every concept so far plus
+  critiques from the last `FEED_WINDOW` rounds (default 3, `--feed-window` to
+  change it) — the log is complete, the visible feed is a rolling window over
+  it. Every action is logged as one JSON line to `logs/run_<timestamp>.jsonl`,
+  with the window and roster recorded alongside in
+  `logs/run_<timestamp>.meta.json`.
 - **`analyze.py`** reads a run log, extracts descriptors (spaCy noun phrases)
   from critic evaluations, clusters them by exact match + embedding similarity
   (sentence-transformers), detects when a descriptor first coined by one critic

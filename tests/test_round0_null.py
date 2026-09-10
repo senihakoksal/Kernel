@@ -88,9 +88,24 @@ class _TextBlock:
         self.text = text
 
 
+class _Usage:
+    """Stands in for SDK usage counters, which Agent.act reports to UsageTally.
+
+    Values are arbitrary — nothing here asserts on token counts. The fields
+    have to exist because agents.py reads them off every response, so a double
+    that omits them is not modelling the response shape.
+    """
+
+    input_tokens = 0
+    output_tokens = 0
+    cache_creation_input_tokens = 0
+    cache_read_input_tokens = 0
+
+
 class _Response:
     def __init__(self, text: str):
         self.content = [_TextBlock(text)]
+        self.usage = _Usage()
 
 
 class _StubMessages:

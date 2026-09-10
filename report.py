@@ -358,7 +358,7 @@ function showRun(i) {
             <p>The convergence could have three sources: critics <em>reading each other</em>,
             critics all judging the <em>same artworks</em>, or shared model <em>priors</em>. To
             isolate the first, the copper line below replays the identical artworks but with each
-            critic isolated &mdash; it sees only the artworks and its <em>own</em> past critiques,
+            critic isolated &mdash; it sees only the artworks and its <em>own</em> recent critiques,
             never another critic's. Same stimulus and priors; the one thing removed is the
             peer-critique channel, so the <strong>gap between the two lines</strong> is the share
             of convergence that comes from critics reading one another. Vocabulary overlap grew
