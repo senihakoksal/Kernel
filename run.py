@@ -43,9 +43,17 @@ LOG_DIR = Path("logs")
 
 # Max Claude calls in flight at once. Large rosters can otherwise burst past
 # the API's rate limits (starter tier: 50 requests/min and 8,000 output
-# tokens/min; the bucket counts each call's max_tokens). Raise this if your
-# tier allows more.
-MAX_CONCURRENT = 3
+# tokens/min; the bucket counts each call's max_tokens, not what a call
+# actually returns).
+#
+# That output bucket is the hard ceiling: 8,000 / max_tokens = 10 calls/min at
+# max_tokens=800, whatever the concurrency. A 5-round 2x5 run measured ~3.8
+# calls/min at MAX_CONCURRENT=3 — well under the ceiling, so the run was
+# latency-bound rather than limit-bound, and widening the pipe buys real
+# wall-clock. Past the ceiling nothing errors: requests just 429, the SDK backs
+# off and retries, and throughput flattens while individual calls stall. If the
+# console shows retry delays, come back down.
+MAX_CONCURRENT = 6
 
 
 async def throttled(sem: asyncio.Semaphore, coro):
