@@ -41,6 +41,9 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import AgglomerativeClustering
 
 from agents import SHARED_SYSTEM_PROMPT
+# run.py owns the sidecar format; importing it here keeps one definition of
+# where a run's feed window is recorded.
+from run import read_run_meta
 
 # ---------------------------------------------------------------------------
 # Similarity threshold for treating two descriptors as "the same" idea.
@@ -387,24 +390,46 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def adoption_rate(occ: pd.DataFrame) -> pd.DataFrame:
+def adoption_rate(occ: pd.DataFrame, window: int | None = None) -> pd.DataFrame:
     """Share of borrowable vocabulary actually in use, per round.
 
     A rate, not a count: a raw count of adoptions is uninterpretable without
-    knowing how many chances there were, and the pool of adoptable vocabulary
-    grows every round, so a rising count can reflect nothing but a bigger pool.
-    Per round, not cumulative: a running total can only rise — it climbs whether
-    adoption is accelerating, steady, or dying — so it cannot answer the one
-    question this panel exists for.
+    knowing how many chances there were. Per round, not cumulative: a running
+    total can only rise — it climbs whether adoption is accelerating, steady, or
+    dying — so it cannot answer the one question this panel exists for.
 
-    For a round r, with first_round(k) the earliest round cluster k appears and
-    coiners(k) every critic who used it in that round:
+    For a round r, with coiners(k) every critic who used cluster k in the round
+    it first appeared, and [lo, hi) = the visible critique rounds at r:
 
-      eligible(c, r) = clusters k where first_round(k) < r and c not in coiners(k)
+      eligible(c, r) = clusters k that some critic OTHER THAN c used in a round
+                       in [lo, hi), where c is not in coiners(k)
       opportunities(r) = sum over critics of |eligible(c, r)|
       uses(r)          = (critic, cluster) pairs from those eligible sets that
                          the critic used at round r
       rate(r)          = uses(r) / opportunities(r)
+
+    THE RECENCY BOUND IS THE POINT. An earlier version asked only whether a
+    cluster had been coined before round r, so a term coined in round 0 stayed
+    "borrowable" forever — including long after the feed window aged it out of
+    every agent's prompt. That made the denominator count vocabulary nobody
+    could see, and it grew without bound: measured on run_20260611_172539 at
+    window 3, 23% of the round-4 denominator was already unreachable, tending to
+    (r-window)/r, so roughly 60% by round 8. The rate then fell over rounds as
+    an artefact of run length rather than of behaviour. Bounding eligibility to
+    the same window the agents saw removes that.
+
+    `window=None` means unbounded — the correct reading for logs written before
+    the feed window existed, whose agents really did see the whole history. Pass
+    the window the run was produced with (it is in logs/<run>.meta.json);
+    measuring against a different window than the run used is meaningless.
+
+    "Used by another critic" rather than "coined by another critic" is what
+    keeps this comparable across arms. In the treatment those critiques were in
+    the critic's feed, so the vocabulary was genuinely available. In the
+    isolated control the same rule selects vocabulary the critic provably could
+    NOT have seen, so its rate is the detector's false-positive floor. Same
+    rule, applied to each arm's own history — which is what makes the gap
+    between the two the peer channel rather than a difference in bookkeeping.
 
     This is PREVALENCE, not incidence: every round a critic uses a borrowed
     cluster counts, not only the first. A term adopted once and dropped is a
@@ -413,28 +438,36 @@ def adoption_rate(occ: pd.DataFrame) -> pd.DataFrame:
     tic cannot dominate the measure.
 
     Rounds where opportunities(r) == 0 are OMITTED, never plotted as zero. That
-    always includes round 0, where the eligible pool is empty and the rate is
-    0/0 — undefined, not zero. Returns columns round/uses/opportunities/rate.
+    always includes round 0, where no critique precedes the round and the rate
+    is 0/0 — undefined, not zero. Returns columns round/uses/opportunities/rate.
     """
     columns = ["round", "uses", "opportunities", "rate"]
     if occ.empty:
         return pd.DataFrame(columns=columns)
 
     critics = sorted(occ["critic"].unique())
-    first_round: dict = {}
     coiners: dict = {}
     for cluster, grp in occ.groupby("cluster"):
-        fr = grp["round"].min()
-        first_round[cluster] = fr
-        coiners[cluster] = set(grp.loc[grp["round"] == fr, "critic"])
+        first = grp["round"].min()
+        coiners[cluster] = set(grp.loc[grp["round"] == first, "critic"])
 
     # Deduplicated: repeated use of a cluster inside one round counts once.
     used = set(zip(occ["critic"], occ["cluster"], occ["round"]))
+    by_round: dict = defaultdict(set)          # round -> {(critic, cluster)}
+    for critic, cluster, rnd in used:
+        by_round[rnd].add((critic, cluster))
 
     rows = []
     for r in sorted(occ["round"].unique()):
-        eligible = [(c, k) for k, fr in first_round.items() if fr < r
-                    for c in critics if c not in coiners[k]]
+        lo = 0 if window is None else max(0, r - window)
+        authors: dict = defaultdict(set)       # cluster -> critics who used it in [lo, r)
+        for rnd in range(lo, r):
+            for critic, cluster in by_round.get(rnd, ()):
+                authors[cluster].add(critic)
+
+        eligible = [(c, k) for k, wrote in authors.items()
+                    for c in critics
+                    if c not in coiners[k] and (wrote - {c})]
         if not eligible:
             continue
         uses = sum(1 for c, k in eligible if (c, k, r) in used)
@@ -609,8 +642,8 @@ def make_figure(vocab_df: pd.DataFrame, spread_df: pd.DataFrame,
     fig.update_yaxes(title_text="borrowed vocabulary in use", ticksuffix="%",
                      rangemode="tozero", row=2, col=1)
     _panel_heading(fig, 2, "Borrowed vocabulary in use, per round",
-                   "of all the vocabulary a critic could have borrowed from others, "
-                   "the share actually in use that round")
+                   "of the vocabulary another critic used recently enough to still be "
+                   "in the feed, the share this critic also used that round")
     # The left edge carries the structural gap, so the missing round 0 does not
     # read as missing data.
     fig.add_annotation(xref="x2 domain", x=0.005, xanchor="left",
@@ -805,6 +838,22 @@ def descriptor_pipeline(critic_evals: pd.DataFrame, nlp,
     return by_condition["single"], seeds, n_subtracted
 
 
+def feed_window_for(log_path: Path) -> tuple[int | None, str]:
+    """The feed window a log was produced with, and where that came from.
+
+    None means unbounded, which is the correct reading for a log with no
+    sidecar: those runs predate the window and their agents saw everything.
+    Measuring adoption against a window the run did not use would be
+    meaningless, so this is read per log rather than assumed.
+    """
+    meta = read_run_meta(log_path)
+    if meta is None:
+        return None, "no sidecar — treating the run as unwindowed"
+    if "feed_window" not in meta:
+        return None, "sidecar records no feed_window — treating as unwindowed"
+    return meta["feed_window"], log_path.with_suffix(".meta.json").name
+
+
 def critic_evaluations(log_path: Path) -> pd.DataFrame:
     """The critic evaluations of one run log, or exit if there are none."""
     df = load_records(log_path)
@@ -816,7 +865,8 @@ def critic_evaluations(log_path: Path) -> pd.DataFrame:
 
 def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
                             occ: pd.DataFrame, seeds: list[str],
-                            n_subtracted: int, pooled_with: str | None = None) -> None:
+                            n_subtracted: int, pooled_with: str | None = None,
+                            feed_window: int | None = None) -> None:
     """Compute one condition's metrics and write its figure + summary JSON.
 
     `pooled_with` records the other run whose descriptors shared this run's
@@ -827,7 +877,7 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
     scores_df = score_trajectories(critic_evals)
     vocab_df = vocabulary_convergence(occ)
     spread_df = score_spread(scores_df)
-    rate_df = adoption_rate(occ)
+    rate_df = adoption_rate(occ, feed_window)
     usage_df, top_labels = top_descriptor_usage(occ, top_n=10)
 
     print(f"  {log_path.stem}: {occ['cluster'].nunique()} descriptor clusters; "
@@ -871,6 +921,9 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
         "vocab_trend": vocab_trend,
         # None for a standalone analysis; the paired run id when clustered jointly.
         "pooled_with": pooled_with,
+        # The window the adoption rate was measured against. Without it the
+        # rate column cannot be interpreted or compared with another run's.
+        "feed_window": feed_window,
         # The plotted numbers, so the archive page can render them as a table and
         # identity never depends on reading a colour off a chart.
         "series": {
@@ -924,6 +977,17 @@ def main() -> None:
     nlp = spacy.load(SPACY_MODEL)
     embed_model = SentenceTransformer(EMBED_MODEL)
 
+    windows = {name: feed_window_for(path) for name, path in conditions.items()}
+    for name, (win, src) in windows.items():
+        print(f"  {conditions[name].stem}: feed_window="
+              f"{'unbounded' if win is None else win}  ({src})")
+    distinct = {win for win, _ in windows.values()}
+    if len(distinct) > 1:
+        sys.exit("Feed window mismatch across conditions: "
+                 + ", ".join(f"{conditions[n].stem}={w}" for n, (w, _) in windows.items())
+                 + ".\nThe arms saw different amounts of history, so their adoption "
+                   "rates are not comparable.")
+
     evals = {name: critic_evaluations(path) for name, path in conditions.items()}
     by_condition, seeds, n_subtracted = pooled_descriptor_pipeline(evals, nlp, embed_model)
     if all(occ.empty for occ in by_condition.values()):
@@ -941,7 +1005,7 @@ def main() -> None:
             continue
         other = next((conditions[o].stem for o in conditions if o != name), None)
         write_condition_outputs(path, evals[name], occ, seeds, n_subtracted,
-                                pooled_with=other)
+                                pooled_with=other, feed_window=windows[name][0])
 
 
 if __name__ == "__main__":

@@ -29,9 +29,9 @@ import spacy
 from sentence_transformers import SentenceTransformer
 
 from analyze import (EMBED_MODEL, SPACY_MODEL, _early_late, adoption_rate,
-                     critic_evaluations, find_propagation, make_figure,
-                     make_timeline_figure, pooled_descriptor_pipeline, score_spread,
-                     score_trajectories, vocabulary_convergence)
+                     critic_evaluations, feed_window_for, find_propagation,
+                     make_figure, make_timeline_figure, pooled_descriptor_pipeline,
+                     score_spread, score_trajectories, vocabulary_convergence)
 
 FIGURE_DIR = Path("figures")
 
@@ -47,6 +47,19 @@ def metrics_for_pair(treatment_path: Path, control_path: Path, nlp,
     would plot the difference between two cluster geometries and read it as an
     effect of the manipulation.
     """
+    # Both arms must have been produced under the same window, or their
+    # adoption rates are measuring different amounts of available history.
+    windows = {"treatment": feed_window_for(treatment_path),
+               "control": feed_window_for(control_path)}
+    if windows["treatment"][0] != windows["control"][0]:
+        sys.exit(f"Feed window mismatch: treatment="
+                 f"{windows['treatment'][0]}, control={windows['control'][0]}. "
+                 f"The arms saw different amounts of history, so their adoption "
+                 f"rates are not comparable.")
+    window = windows["treatment"][0]
+    print(f"  feed window: {'unbounded' if window is None else window} "
+          f"({windows['treatment'][1]})")
+
     evals = {"treatment": critic_evaluations(treatment_path),
              "control": critic_evaluations(control_path)}
     by_condition, _, _ = pooled_descriptor_pipeline(evals, nlp, embed_model)
@@ -59,9 +72,12 @@ def metrics_for_pair(treatment_path: Path, control_path: Path, nlp,
         _, propagated = find_propagation(occ)
         return {"vocab": vocabulary_convergence(occ),
                 "spread": score_spread(score_trajectories(evals[name])),
-                "rate": adoption_rate(occ),
+                "rate": adoption_rate(occ, window),
                 "propagated": propagated,
-                "occ": occ}
+                "occ": occ,
+                # Carried out so the summary can record what the rate was
+                # measured against; the rate column is uninterpretable without it.
+                "feed_window": window}
 
     return metrics("treatment"), metrics("control")
 
@@ -125,6 +141,7 @@ def main() -> None:
         # Both conditions were clustered together; the overlap figures above are
         # only comparable because of it.
         "shared_vocabulary_space": True,
+        "feed_window": treat["feed_window"],
         "n_clusters": int(pd.concat([treat["occ"], ctrl["occ"]])["cluster"].nunique()),
         "propagated": {"treatment": len(treat["propagated"]),
                        "control": len(ctrl["propagated"])},
