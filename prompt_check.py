@@ -23,7 +23,9 @@ The feeds are built the way each condition built them: for the treatment, the
 log is append-ordered, so a round's critic feed is the log prefix ending just
 before that round's first evaluation (actual recorded order, not re-derived);
 for the control, isolated_feed()'s rule — artworks so far plus only this
-critic's own critiques from earlier rounds.
+critic's own critiques from earlier rounds. Both are then narrowed to the feed
+window the run declared in its .meta.json (unwindowed for logs written before
+the window existed), because that is what the agents were actually sent.
 
 VERSION DRIFT is the real hazard and the reason --treatment-rev exists. A run
 uses whatever agents.py and agents.yaml were on disk at the time, which is not
@@ -183,32 +185,76 @@ def infer_treatment(control_path: Path) -> Path:
     return control_path.parent / f"{'_'.join(stem.split('_')[:-2])}.jsonl"
 
 
-def treatment_feed(records: list[Record], round_idx: int) -> list[Record]:
+def visible_eval_rounds(round_idx: int, window: int | None) -> tuple[int, int]:
+    """The [lo, hi) round range of critiques visible at `round_idx`.
+
+    Mirrors agents.evaluation_round_bounds rather than importing it, for the
+    same reason the feed builders below are local copies: this script audits the
+    prompt machinery, and an auditor that shares an implementation with the
+    thing it audits cannot catch a bug in it.
+
+    `window=None` means no windowing — every critique from an earlier round.
+    That is the correct reading for logs written before the window existed,
+    which have no sidecar to declare one.
+    """
+    if window is None:
+        return 0, round_idx
+    return max(0, round_idx - window), round_idx
+
+
+def treatment_feed(records: list[Record], round_idx: int,
+                   window: int | None) -> list[Record]:
     """The feed as it stood when round `round_idx`'s critics acted.
 
-    run.py appends concepts, then critiques, so that moment is exactly the log
-    prefix ending before this round's first evaluation. Read off recorded order
-    rather than re-derived, so a reordering bug in the run would show up here
-    instead of being reproduced by the check.
+    run.py appends concepts, then critiques, so that moment is the log prefix
+    ending before this round's first evaluation. Read off recorded order rather
+    than re-derived, so a reordering bug in the run would show up here instead
+    of being reproduced by the check — then narrowed to the visible window,
+    which is what agents were actually sent.
     """
+    prefix = None
     for i, r in enumerate(records):
         if r.kind == "evaluation" and r.round == round_idx:
-            return records[:i]
-    sys.exit(f"Treatment log has no evaluations in round {round_idx}.")
+            prefix = records[:i]
+            break
+    if prefix is None:
+        sys.exit(f"Treatment log has no evaluations in round {round_idx}.")
+    lo, hi = visible_eval_rounds(round_idx, window)
+    return [rec for rec in prefix
+            if (rec.kind == "concept" and rec.round <= round_idx)
+            or (rec.kind != "concept" and lo <= rec.round < hi)]
 
 
 def control_feed(concepts_by_round: dict, own: dict, rounds: list[int],
-                 upto: int, critic: str) -> list[Record]:
-    """isolated_feed()'s rule: artworks so far + only this critic's own earlier
-    critiques. Mirrors control.py; kept here so the check does not import the
-    module it is auditing."""
+                 upto: int, critic: str, window: int | None) -> list[Record]:
+    """isolated_feed()'s rule: artworks so far + only this critic's own
+    critiques, from rounds still inside the window. Mirrors control.py; kept
+    here so the check does not import the module it is auditing."""
+    lo, hi = visible_eval_rounds(upto, window)
     feed: list[Record] = []
     for r in rounds:
         if r > upto:
             break
         feed.extend(concepts_by_round[r])
-        feed.extend(rec for rec in own[critic] if rec.round == r)
+        if lo <= r < hi:
+            feed.extend(rec for rec in own[critic] if rec.round == r)
     return feed
+
+
+def resolve_window(log_path: Path, override: int | None) -> tuple[int | None, str]:
+    """The feed window a log was produced with, and where that came from.
+
+    Order: an explicit --feed-window, else the log's own .meta.json, else None
+    (unwindowed) because a log without a sidecar predates the window.
+    """
+    if override is not None:
+        return override, "--feed-window"
+    meta_path = log_path.with_suffix(".meta.json")
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if "feed_window" in meta:
+            return meta["feed_window"], meta_path.name
+    return None, "no sidecar — assuming unwindowed"
 
 
 # --- Rendering and comparing --------------------------------------------------
@@ -252,11 +298,11 @@ def digest(payload: dict) -> str:
 
 
 def compare_round(round_idx, t_records, c_records, t_critics, c_critics,
-                  concepts_by_round, rounds, show, context):
+                  concepts_by_round, rounds, show, context, window):
     """Compare every (critic, concept) prompt pair in one round. Returns
     (n_pairs, n_identical, [failure descriptions])."""
     concepts = concepts_by_round[round_idx]
-    t_feed = treatment_feed(t_records, round_idx)
+    t_feed = treatment_feed(t_records, round_idx, window)
 
     # Each critic's own critiques from earlier rounds, in control-log order.
     own = defaultdict(list)
@@ -271,7 +317,8 @@ def compare_round(round_idx, t_records, c_records, t_critics, c_critics,
     identical = 0
     pairs = 0
     for name in names:
-        c_feed = control_feed(concepts_by_round, own, rounds, round_idx, name)
+        c_feed = control_feed(concepts_by_round, own, rounds, round_idx,
+                              name, window)
         for concept in concepts:
             pairs += 1
             t_payload = capture_prompt(t_critics[name], round_idx, t_feed, concept)
@@ -309,6 +356,9 @@ def main() -> None:
                                            "treatment ran with (default: working tree)")
     p.add_argument("--control-rev", help="git rev the control ran with "
                                          "(default: working tree)")
+    p.add_argument("--feed-window", type=int, default=None,
+                   help="feed window the runs used (default: read each log's "
+                        ".meta.json; unwindowed if it has none)")
     p.add_argument("--show", action="store_true", help="print matching prompts too")
     p.add_argument("--context", type=int, default=3, help="diff context lines")
     args = p.parse_args()
@@ -334,8 +384,21 @@ def main() -> None:
     if unknown:
         sys.exit(f"Round(s) {unknown} not replayed in the control. Available: {rounds}")
 
+    # Each arm's window comes from its own sidecar. If they disagree the prompts
+    # cannot be compared at all — the arms saw different amounts of history —
+    # so say so rather than reporting diffs that are an artefact of that.
+    t_window, t_src = resolve_window(treatment_path, args.feed_window)
+    c_window, c_src = resolve_window(args.control, args.feed_window)
+    if t_window != c_window:
+        sys.exit(f"Feed window mismatch: treatment={t_window} ({t_src}), "
+                 f"control={c_window} ({c_src}). The arms saw different amounts "
+                 f"of history, so their prompts are not comparable. Pass "
+                 f"--feed-window to compare them under one window anyway.")
+    window = t_window
+
     print(f"Treatment: {treatment_path.name}  ({args.treatment_rev or 'working tree'})")
     print(f"Control:   {args.control.name}  ({args.control_rev or 'working tree'})")
+    print(f"Feed window: {'unwindowed' if window is None else window}  ({t_src})")
     if args.treatment_rev is None or args.control_rev is None:
         print("NOTE: sides without an explicit --*-rev are reconstructed from the "
               "CURRENT agents.py/agents.yaml. That assumes neither file has changed "
@@ -377,7 +440,7 @@ def main() -> None:
         for r in targets:
             n, ok, probs = compare_round(r, t_records, c_records, t_critics,
                                          c_critics, concepts_by_round, rounds,
-                                         args.show, args.context)
+                                         args.show, args.context, window)
             total += n
             identical += ok
             problems.extend(probs)
