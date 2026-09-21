@@ -48,10 +48,15 @@ def load_runs() -> list[dict]:
         records = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
         # The run's start time is encoded in its filename: run_YYYYMMDD_HHMMSS.
         stamp = path.stem.removeprefix("run_")
-        started = datetime.strptime(stamp, "%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S")
+        dt = datetime.strptime(stamp, "%Y%m%d_%H%M%S")
+        # A run is identified to the reader by when it happened, not by its
+        # filename. The stem is still carried for the analyze.py command line.
+        # %-d is not portable, so the day is composed rather than formatted.
         runs.append({
             "id": path.stem,
-            "started": started,
+            "name": f"{dt.day} {dt.strftime('%B %Y')}",
+            "clock": dt.strftime("%H:%M"),
+            "started": dt.strftime("%Y-%m-%d %H:%M:%S"),
             "records": records,
             "analysis": load_analysis(path.stem),
             "comparison": load_comparison(path.stem),
@@ -61,146 +66,191 @@ def load_runs() -> list[dict]:
 
 # The page shell. Run data is injected as JSON at the __RUNS_JSON__ marker
 # (plain .replace, so braces below need no escaping); the inline script renders
-# the archive and the per-run detail. Aesthetic: warm cream paper, hairline
-# rules, large old-style serif numerals, letterspaced small-cap labels.
+# the archive and the per-run gallery.
+#
+# The page is built around one unit: an artwork, then the reception of that
+# artwork. Two facts drive every decision here.
+#
+# First, the medium is text, so a work is a passage — it gets the largest type on
+# the page and nothing competes with it. Second, each work carries roughly ten
+# times more words of criticism than of art, so the critiques are COLLAPSED by
+# default. Open, they bury the thing they are about; what stays visible is the
+# shape of the reception (six scores on a track, mean, range), which is scannable
+# down the gallery in a way six blocks of prose never are.
+#
+# Colours are analyze.PALETTE_LIGHT verbatim, so the page ground is the figures'
+# own paper colour and an embedded plot has no visible edge.
 PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Observation Kernel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
+  /* Palette: analyze.PALETTE_LIGHT verbatim. The page ground IS the figures'
+     paper colour, so an embedded plot has no visible edge — it sits on the wall
+     instead of being framed on it. */
   :root {
-    --bg: #f4efe7;        /* warm cream paper */
-    --panel: #faf7f1;     /* slightly lighter panel */
-    --ink: #2b2620;       /* warm near-black */
-    --muted: #94896f;     /* warm gray for labels */
-    --soft: #6f675c;      /* secondary text */
-    --hairline: #e0d8c8;  /* thin rules */
-    --accent: #b06c3f;    /* copper (status dot, scores, links) */
-    --sage: #7d8b6f;      /* concepts */
-    --serif: "Cormorant Garamond", Georgia, serif;
-    --sans: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --wall: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-3: #7c7b76;
+    --rule: #e6e5e1;
+    --accent: #2a78d6;
+    --text: "Inter", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
-  body { background: var(--bg); color: var(--ink); font-family: var(--sans);
-         max-width: 62rem; margin: 3rem auto 6rem; padding: 0 1.5rem;
-         line-height: 1.55; }
+  * { box-sizing: border-box; }
+  html { background: var(--wall); }
+  body { margin: 0; background: var(--wall); color: var(--ink); font-family: var(--text);
+         font-weight: 400; font-size: 16px; line-height: 1.6;
+         -webkit-font-smoothing: antialiased; }
+
+  /* Two widths: a reading column for the works, a wide one for figures. */
+  .col  { max-width: 43rem; margin: 0 auto; padding: 0 1.75rem; }
+  .wide { max-width: 76rem; margin: 0 auto; padding: 0 1.75rem; }
+
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .quiet { color: var(--ink-3); font-size: .8rem; }
+  .m { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-  /* Letterspaced small-cap labels, as in the reference design. */
-  .label { font-family: var(--sans); font-size: .68rem; font-weight: 600;
-           letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
-  .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%;
-         background: var(--accent); margin-right: .55rem; vertical-align: 1px; }
+  header { padding: 5.5rem 0 0; }
+  .kernel { font-family: var(--mono); font-size: .7rem; color: var(--ink-3);
+            letter-spacing: .04em; }
+  h1 { font-weight: 300; font-size: 2.4rem; letter-spacing: -.025em; line-height: 1.1;
+       margin: .9rem 0 .6rem; }
+  h1 .at { color: var(--ink-3); font-size: .55em; letter-spacing: 0;
+           font-family: var(--mono); margin-left: .5rem; vertical-align: .18em; }
+  .lede { color: var(--ink-3); font-size: .95rem; margin: 0 0 4.5rem; max-width: 34rem; }
 
-  h1 { font-family: var(--serif); font-weight: 500; font-size: 2.6rem;
-       margin: .4rem 0 2.2rem; letter-spacing: .01em; }
-  h2 { font-family: var(--serif); font-weight: 500; font-size: 1.9rem;
-       margin: .2rem 0 .2rem; }
-  .when { color: var(--soft); font-size: .85rem; margin-bottom: 1.6rem; }
+  /* --- archive: a quiet typographic list, not cards --------------------- */
+  .runs { border-top: 1px solid var(--rule); }
+  .runs-head { border-bottom: 0; }
+  /* The numbers sit on ONE baseline row with the run name, and the work titles
+     get a row of their own spanning every column. Previously the titles shared
+     column one and the row was end-aligned, so a long or missing title line
+     moved the numbers up and down and nothing could be read down the column.
+     Their column header carries the unit, so no label repeats per row. */
+  .runs-cols { display: grid; grid-template-columns: 1fr 4.5rem 5.5rem 4.5rem;
+               gap: .5rem 2.25rem; }
+  .runs-head { padding-bottom: .8rem; font-size: .66rem; color: var(--ink-3); }
+  .runs-head div:not(:first-child) { text-align: right; }
+  .run { padding: 2rem 0; border-bottom: 1px solid var(--rule); cursor: pointer; }
+  .run:hover .run-name { color: var(--accent); }
+  .run-name { font-size: 1.02rem; font-weight: 400; transition: color .12s ease; }
+  .run-name .clock { color: var(--ink-3); font-family: var(--mono); font-size: .8rem;
+                     margin-left: .6rem; }
+  .run-titles { grid-column: 1 / -1; color: var(--ink-3); font-size: .85rem;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-n { text-align: right; font-family: var(--mono); font-size: .88rem;
+           color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
-  /* Stat cards: big old-style serif numerals over hairlines. */
-  /* One row always: each stat gets an equal column, however many there are. */
-  .stats { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-           column-gap: 2rem; margin: 1.5rem 0 2.5rem; }
-  .stat { border-bottom: 1px solid var(--hairline); padding: 1.1rem 0 1.3rem; }
-  .stat .num { font-family: var(--serif); font-size: 3.2rem; font-weight: 400;
-               line-height: 1.05; font-variant-numeric: oldstyle-nums; }
-  .stat .sub { color: var(--muted); font-size: .85rem; margin-top: .15rem; }
+  /* --- the gallery ------------------------------------------------------ */
+  .round { margin: 5.5rem 0 3rem; font-family: var(--mono); font-size: .7rem;
+           color: var(--ink-3); }
+  .work { margin: 0 0 6.5rem; }
+  .work-by { font-family: var(--mono); font-size: .72rem; color: var(--ink-3);
+             margin-bottom: .9rem; }
+  .work-title { font-weight: 500; font-size: 1.85rem; letter-spacing: -.02em;
+                line-height: 1.2; margin: 0 0 1.5rem; }
+  /* The artwork. Near-black, large, generously led — the only thing on the page
+     set at this size, because it is the subject and everything else is about it. */
+  .work-text { font-size: 1.28rem; line-height: 1.68; color: var(--ink);
+               font-weight: 300; white-space: pre-wrap; margin: 0; }
+  .work-why { margin: 1.5rem 0 0; font-size: .88rem; color: var(--ink-3);
+              max-width: 32rem; }
 
-  /* Run archive table. */
-  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-  th { text-align: left; padding: .55rem .8rem .55rem 0; border-bottom: 1px solid var(--hairline); }
-  td { text-align: left; padding: .8rem .8rem .8rem 0; border-bottom: 1px solid var(--hairline);
-       font-variant-numeric: oldstyle-nums; }
-  td.run-date { font-family: var(--serif); font-size: 1.25rem; }
-  tr.run-row { cursor: pointer; }
-  tr.run-row:hover { background: var(--panel); }
+  /* Reception: the shape of six judgements, before any of their words. */
+  .recv { margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1.1rem; }
+  .recv-row { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+  .track { position: relative; flex: 1 1 14rem; height: 1.5rem; min-width: 11rem; }
+  .track .axis { position: absolute; top: 50%; left: 0; right: 0; height: 1px;
+                 background: var(--rule); }
+  .track .dot { position: absolute; top: 50%; width: 8px; height: 8px; border-radius: 50%;
+                background: var(--accent); transform: translate(-50%, -50%);
+                box-shadow: 0 0 0 2px var(--wall); }
+  .track .cap { position: absolute; top: 50%; width: 1px; height: 7px; background: var(--rule);
+                transform: translate(-50%, -50%); }
+  .recv-stat { font-family: var(--mono); font-size: .78rem; color: var(--ink-2);
+               font-variant-numeric: tabular-nums; text-align: right; }
+  .recv-stat.mean { width: 5.5rem; }
+  .recv-stat.range { width: 8.5rem; }
+  .recv-stat em { font-style: normal; color: var(--ink-3); font-family: var(--text);
+                  font-size: .7rem; }
+  .recv details { margin-top: 1.1rem; }
+  .recv summary { cursor: pointer; font-size: .8rem; color: var(--accent); list-style: none; }
+  .recv summary::-webkit-details-marker { display: none; }
+  .recv summary::before { content: "+ "; }
+  .recv details[open] summary::before { content: "\2212 "; }
+  .recv summary:hover { text-decoration: underline; }
 
-  /* Report panel. */
-  .report { background: var(--panel); border: 1px solid var(--hairline);
-            padding: 1.6rem 1.8rem; margin: 1.8rem 0 2.4rem; }
-  .report p { margin: .5rem 0 1.1rem; color: var(--soft); max-width: 46rem; }
-  .report .verdict { color: var(--ink); font-family: var(--serif);
-                     font-size: 1.15em; font-style: italic; }
-  ul.method { margin: .5rem 0 1.2rem; padding-left: 1.1rem; max-width: 46rem; }
-  ul.method li { color: var(--soft); margin: .35rem 0; padding-left: .2rem; }
-  ul.method strong { color: var(--ink); }
-  .report p.caveat { background: #f0ebe0; border-left: 3px solid #cbb892;
-                     padding: .6rem .9rem; font-size: .9rem; }
-  details.about { margin-bottom: 1.2rem; }
-  details.about summary { font-family: var(--sans); font-size: .68rem; font-weight: 600;
-                       letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
-                       cursor: pointer; }
-  details.about summary:hover { color: var(--ink); }
-  details.about[open] summary { margin-bottom: .6rem; }
-  details.propagated { margin-top: 1.2rem; border-top: 1px solid var(--hairline);
-                       padding-top: .8rem; }
-  details.propagated summary { font-family: var(--sans); font-size: .68rem;
-                       font-weight: 600; letter-spacing: .18em; text-transform: uppercase;
-                       color: var(--muted); cursor: pointer; }
-  details.propagated summary:hover { color: var(--ink); }
-  details.propagated ul.themes { margin-top: .8rem; }
-  ul.themes { list-style: none; padding: 0; margin: .5rem 0 1.2rem; columns: 2; }
-  ul.themes li { padding: .22rem 0 .22rem 1.1rem; position: relative;
-                 break-inside: avoid; color: var(--ink); }
-  ul.themes li::before { content: ""; position: absolute; left: 0; top: .72em;
-                         width: .38rem; height: .38rem; border-radius: 50%;
-                         background: #cfc6b2; }
-  /* Height is set per figure inline (analyze.py emits 920px, or 1240px with a
-     control overlay); this is only the fallback if that attribute is missing. */
-  .report iframe { width: 100%; height: 960px; border: 1px solid var(--hairline);
-                   background: #fff; margin-top: .6rem; }
-  code { background: var(--panel); border: 1px solid var(--hairline);
-         padding: .1rem .35rem; font-size: .85em; }
+  .crit { padding: 1.4rem 0; border-bottom: 1px solid var(--rule); }
+  .crit:last-child { border-bottom: 0; padding-bottom: 0; }
+  .crit-head { display: flex; align-items: baseline; gap: .9rem; margin-bottom: .6rem; }
+  .crit-who { font-family: var(--mono); font-size: .74rem; color: var(--ink-2); }
+  .crit-score { font-family: var(--mono); font-size: .74rem; color: var(--ink);
+                margin-left: auto; font-variant-numeric: tabular-nums; }
+  .crit-text { font-size: .95rem; line-height: 1.65; color: var(--ink-2);
+               white-space: pre-wrap; }
+  .crit-why { margin-top: .55rem; font-size: .84rem; color: var(--ink-3); }
 
-  /* Round-by-round record. */
-  .round-label { margin: 2.2rem 0 .8rem; padding-top: 1rem;
-                 border-top: 1px solid var(--hairline); }
-  .card { background: var(--panel); border: 1px solid var(--hairline);
-          border-left: 3px solid var(--hairline);
-          padding: .9rem 1.2rem; margin: .8rem 0; }
-  .card.concept { border-left-color: var(--sage); }
-  .card.evaluation { border-left-color: var(--accent); }
-  .who { font-family: var(--serif); font-size: 1.2rem; }
-  .role-tag { color: var(--muted); font-size: .72rem; letter-spacing: .14em;
-              text-transform: uppercase; margin-left: .5rem; }
-  .target { color: var(--soft); font-size: .82rem; margin-top: .15rem; }
-  .target .artist { color: var(--accent); }
-  .work-title { font-family: var(--serif); font-size: 1.45rem; font-style: italic;
-                margin-top: .3rem; }
-  .score { float: right; font-family: var(--serif); font-size: 1.5rem;
-           color: var(--accent); font-variant-numeric: oldstyle-nums; }
-  .content { margin-top: .45rem; }
-  .reasoning { color: var(--soft); font-style: italic; margin-top: .45rem;
-               font-family: var(--serif); font-size: 1.05rem; }
-
+  /* --- analysis: reference, not the headline --------------------------- */
+  .analysis { border-top: 1px solid var(--rule); margin-top: 1rem; padding-top: 1.1rem; }
+  .analysis > summary { cursor: pointer; font-size: .85rem; color: var(--accent);
+                        list-style: none; }
+  .analysis > summary::-webkit-details-marker { display: none; }
+  .analysis > summary::before { content: "+ "; }
+  .analysis[open] > summary::before { content: "\2212 "; }
+  .analysis p { font-size: .92rem; color: var(--ink-2); max-width: 40rem; }
+  .analysis .caveat { color: var(--ink-3); font-size: .85rem; }
+  .fig { margin: 1.75rem 0 .5rem; }
+  .fig iframe { width: 100%; border: 0; display: block; }
+  .links { font-size: .8rem; color: var(--ink-3); }
+  .themes { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .9rem; }
+  .theme { font-family: var(--mono); font-size: .72rem; color: var(--ink-2);
+           border: 1px solid var(--rule); padding: .15rem .5rem; }
+  table { border-collapse: collapse; margin-top: .9rem; font-family: var(--mono);
+          font-size: .72rem; }
+  th, td { border-bottom: 1px solid var(--rule); padding: .35rem .8rem .35rem 0;
+           text-align: right; color: var(--ink-2); font-weight: 400;
+           font-variant-numeric: tabular-nums; }
+  th { color: var(--ink-3); font-size: .66rem; }
+  th:first-child, td:first-child { text-align: left; }
+  code { font-family: var(--mono); font-size: .85rem; color: var(--ink-2); }
+  .back { font-family: var(--mono); font-size: .72rem; color: var(--ink-3);
+          display: inline-block; padding: 3.5rem 0 2rem; }
+  .back:hover { color: var(--accent); text-decoration: none; }
   #detail { display: none; }
-  a.back { display: inline-block; margin-bottom: 1.4rem; font-size: .8rem;
-           letter-spacing: .14em; text-transform: uppercase; }
+  @media (max-width: 40rem) {
+    h1 { font-size: 1.9rem; }
+    .work-title { font-size: 1.45rem; }
+    .work-text { font-size: 1.12rem; }
+    .work { margin-bottom: 4.5rem; }
+  }
 </style>
 </head>
 <body>
 
-<div class="label"><span class="dot"></span>Observation Kernel</div>
-<h1>Run archive</h1>
-
 <div id="archive">
-  <div class="stats" id="overview"></div>
-  <div class="label">Runs</div>
-  <table>
-    <thead><tr><th class="label">started</th><th class="label">rounds</th>
-               <th class="label">works</th><th class="label">critiques</th>
-               <th class="label">artists</th><th class="label">critics</th>
-               <th class="label">report</th></tr></thead>
-    <tbody id="run-list"></tbody>
-  </table>
+  <header class="col">
+    <div class="kernel">Observation Kernel</div>
+    <h1>Studio archive</h1>
+    <p class="lede">Artists invent artworks in language; critics judge them and read
+    each other. Each run is a studio that ran for a number of rounds.</p>
+  </header>
+  <div class="col">
+    <div class="runs-head runs-cols"><div>run</div><div>works</div>
+      <div>critiques</div><div>rounds</div></div>
+    <div class="runs" id="run-list"></div>
+  </div>
 </div>
 
 <div id="detail">
-  <a class="back" href="#" onclick="showArchive(); return false;">&larr; all runs</a>
+  <div class="col"><a class="back" href="#" onclick="showArchive(); return false;">&larr; archive</a></div>
   <div id="detail-body"></div>
 </div>
 
@@ -209,37 +259,86 @@ const RUNS = __RUNS_JSON__;
 
 function esc(s) {
   const d = document.createElement("div");
-  d.textContent = s;
+  d.textContent = s == null ? "" : s;
   return d.innerHTML;
 }
 
 function counts(run) {
-  return {
-    concepts: run.records.filter(r => r.kind === "concept").length,
-    evals: run.records.filter(r => r.kind === "evaluation").length,
-    rounds: new Set(run.records.map(r => r.round)).size,
-    artists: new Set(run.records.filter(r => r.role === "artist").map(r => r.agent)).size,
-    critics: new Set(run.records.filter(r => r.role === "critic").map(r => r.agent)).size,
-  };
-}
-
-function stat(num, label, sub) {
-  return `<div class="stat"><div class="label">${label}</div>
-          <div class="num">${num}</div><div class="sub">${sub}</div></div>`;
+  const c = {rounds: 0, concepts: 0, evals: 0, artists: new Set(), critics: new Set()};
+  for (const r of run.records) {
+    c.rounds = Math.max(c.rounds, r.round + 1);
+    if (r.kind === "concept") { c.concepts++; c.artists.add(r.agent); }
+    else { c.evals++; c.critics.add(r.agent); }
+  }
+  return {rounds: c.rounds, concepts: c.concepts, evals: c.evals,
+          artists: c.artists.size, critics: c.critics.size};
 }
 
 function showArchive() {
   document.getElementById("archive").style.display = "block";
   document.getElementById("detail").style.display = "none";
+  window.scrollTo(0, 0);
 }
 
-// Accessibility: the figure's numbers as a table. Columns follow what the
-// figure actually plots — the adoption RATE with its uses/opportunities, not a
-// cumulative count, which the figure deliberately does not draw.
+/* Six judgements on a 0-1 track. Single hue, not six: a dot plot is an
+   all-pairs form, which caps at three categorical hues before colourblind
+   separation fails — so identity rides on the hover label, the same choice the
+   adoption-timeline figure makes. A 2px wall-coloured ring keeps overlapping
+   dots readable. */
+function track(crits) {
+  const scored = crits.filter(c => c.score != null);
+  if (!scored.length) return '<div class="track"><div class="axis"></div></div>';
+  const dots = scored.map(c =>
+    `<span class="dot" style="left:${(c.score * 100).toFixed(1)}%"
+           title="${esc(c.agent)} — ${c.score.toFixed(2)}"></span>`).join("");
+  return `<div class="track"><div class="axis"></div>
+            <span class="cap" style="left:0"></span><span class="cap" style="left:100%"></span>
+            ${dots}</div>`;
+}
+
+/* One artwork, then its reception. The critiques are collapsed because there
+   are ten times more words of criticism than of art, and open by default the
+   commentary buries the work it is about. */
+function workBlock(entry) {
+  const w = entry.work, crits = entry.critiques;
+  const scored = crits.map(c => c.score).filter(s => s != null);
+  const mean = scored.length ? scored.reduce((a, b) => a + b, 0) / scored.length : null;
+
+  let stat = "";
+  if (mean != null) {
+    stat = `<span class="recv-stat mean">${mean.toFixed(2)} <em>mean</em></span>`
+         + `<span class="recv-stat range">${Math.min(...scored).toFixed(2)}&ndash;${Math.max(...scored).toFixed(2)} <em>range</em></span>`;
+  }
+
+  const body = crits.map(c => `
+    <div class="crit">
+      <div class="crit-head"><span class="crit-who">${esc(c.agent)}</span>
+        ${c.score != null ? `<span class="crit-score">${c.score.toFixed(2)}</span>` : ""}</div>
+      <div class="crit-text">${esc(c.content)}</div>
+      ${c.reasoning ? `<div class="crit-why">${esc(c.reasoning)}</div>` : ""}
+    </div>`).join("");
+
+  const reception = crits.length ? `
+    <div class="recv">
+      <div class="recv-row">${track(crits)}${stat}</div>
+      <details><summary>${crits.length} critique${crits.length === 1 ? "" : "s"}</summary>
+        ${body}
+      </details>
+    </div>` : `<div class="recv"><span class="quiet">No critiques recorded.</span></div>`;
+
+  return `<article class="work">
+      <div class="work-by">${esc(w.agent)}<span class="quiet"> · ${esc(w.concept_id || "")}</span></div>
+      <h2 class="work-title">${w.title ? esc(w.title) : "Untitled"}</h2>
+      <p class="work-text">${esc(w.content)}</p>
+      ${w.reasoning ? `<p class="work-why">${esc(w.reasoning)}</p>` : ""}
+      ${reception}
+    </article>`;
+}
+
 function dataTable(a, cmp) {
   const s = a && a.series;
   if (!s) return "";
-  const cs = cmp && cmp.series;                      // paired: both conditions
+  const cs = cmp && cmp.series;
   const rounds = [...new Set([
     ...(s.overlap || []).map(r => r.round),
     ...(s.adoption_rate || []).map(r => r.round),
@@ -250,233 +349,155 @@ function dataTable(a, cmp) {
     const hit = (rows || []).find(r => r.round === rnd);
     return hit === undefined ? null : hit[key];
   };
-  const pct = v => v === null ? "&mdash;" : (v * 100).toFixed(2) + "%";
+  // Two formatters, because the two quantities are an order of magnitude apart:
+  // overlap runs 7-15% and reads wrong at 2dp, the adoption rate runs 1-3% and
+  // loses its resolution at 1dp. One shared formatter mis-set both.
+  const pctOv = v => v === null ? "&mdash;" : (v * 100).toFixed(1) + "%";
+  const pctRt = v => v === null ? "&mdash;" : (v * 100).toFixed(2) + "%";
   const num = v => v === null ? "&mdash;" : v.toFixed(3);
   const frac = (u, o) => u === null ? "&mdash;" : u + " / " + o;
   const paired = !!cs;
   const head = paired
-    ? ["round", "Dice (T)", "Dice (C)", "borrowed in use (T)", "borrowed in use (C)",
-       "uses/opps (T)", "uses/opps (C)", "spread (T)", "spread (C)"]
-    : ["round", "overlap — Dice", "borrowed in use", "uses / opportunities",
-       "score spread"];
+    ? ["round", "dice T", "dice C", "borrowed T", "borrowed C",
+       "uses/opps T", "uses/opps C", "spread T", "spread C"]
+    : ["round", "overlap (dice)", "borrowed in use", "uses / opportunities", "score spread"];
   const rows = rounds.map(rnd => {
     if (!paired) {
-      return [rnd, pct(at(s.overlap, rnd, "dice")),
-              pct(at(s.adoption_rate, rnd, "rate")),
+      return [rnd, pctOv(at(s.overlap, rnd, "dice")), pctRt(at(s.adoption_rate, rnd, "rate")),
               frac(at(s.adoption_rate, rnd, "uses"), at(s.adoption_rate, rnd, "opportunities")),
               num(at(s.spread, rnd, "spread"))];
     }
     const tr = cs.adoption_rate.treatment, cr = cs.adoption_rate.control;
-    return [rnd,
-            pct(at(cs.overlap.treatment, rnd, "dice")),
-            pct(at(cs.overlap.control, rnd, "dice")),
-            pct(at(tr, rnd, "rate")), pct(at(cr, rnd, "rate")),
+    return [rnd, pctOv(at(cs.overlap.treatment, rnd, "dice")),
+            pctOv(at(cs.overlap.control, rnd, "dice")),
+            pctRt(at(tr, rnd, "rate")), pctRt(at(cr, rnd, "rate")),
             frac(at(tr, rnd, "uses"), at(tr, rnd, "opportunities")),
             frac(at(cr, rnd, "uses"), at(cr, rnd, "opportunities")),
             num(at(cs.spread.treatment, rnd, "spread")),
             num(at(cs.spread.control, rnd, "spread"))];
   });
-  return `<details class="datatable"><summary>The figure's numbers as a table</summary>
+  return `<details><summary class="links">The figure's numbers as a table</summary>
     <table><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead>
-    <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody>
-    </table>
-    <p class="caveat">Dashes at round 0 in the adoption columns are structural: there are no
-    earlier coinages to borrow, so the rate is undefined rather than zero.</p>
-    </details>`;
+    <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>
+    <p class="caveat">Dashes at round 0 in the adoption columns are structural: no critique
+    precedes the round, so the rate is undefined rather than zero.</p></details>`;
+}
+
+function analysisBlock(run) {
+  const a = run.analysis, cmp = run.comparison;
+  if (!a) {
+    return `<div class="col"><div class="analysis"><p class="quiet">Not analysed yet &mdash;
+      <code>uv run python analyze.py logs/${esc(run.id)}.jsonl</code></p></div></div>`;
+  }
+  let findings = `${a.n_clusters} descriptor clusters survived the pipeline;
+    ${a.propagated.length} were later used by a critic who had not coined them.`;
+  if (a.vocab_trend) {
+    const pc = a.vocab_trend.pct_change;
+    findings += ` Average pairwise overlap moved from ${(a.vocab_trend.early * 100).toFixed(1)}%
+      to ${(a.vocab_trend.late * 100).toFixed(1)}% (${pc >= 0 ? "+" : ""}${pc}% relative),
+      comparing the first two rounds with the last two.`;
+  }
+  if (a.feed_window != null) findings += ` Critics saw critiques from the last ${a.feed_window} rounds.`;
+
+  const control = cmp ? `<p>Replaying the identical artworks with every critic isolated —
+    each seeing the works and its own recent critiques, never a peer's — overlap grew
+    ${(cmp.control.early * 100).toFixed(1)}% to ${(cmp.control.late * 100).toFixed(1)}%
+    against ${(cmp.treatment.early * 100).toFixed(1)}% to
+    ${(cmp.treatment.late * 100).toFixed(1)}% with peers visible. Both arms are clustered
+    together in one pooled space of ${cmp.n_clusters} clusters.</p>
+    <p class="caveat">Round 0 is identical in both arms by construction and their prompts are
+    verified byte-identical, so any gap there is noise. From round 1 the isolated critics carry
+    their own regenerated history, so the arms differ in more than the peer channel alone.</p>`
+    : "";
+  const themes = a.propagated.length
+    ? `<div class="themes">${a.propagated.map(t => `<span class="theme">${esc(t)}</span>`).join("")}</div>`
+    : "<p class='quiet'>Nothing propagated across critics.</p>";
+
+  return `<div class="col"><details class="analysis">
+      <summary>Analysis</summary>
+      <p>${findings}</p>${control}
+    </details></div>
+    <div class="wide"><div class="fig">
+      <iframe src="${esc(cmp ? cmp.figure : a.figure)}" style="height:940px" loading="lazy"></iframe>
+    </div></div>
+    <div class="col">
+      <p class="links"><a href="${esc(cmp ? cmp.figure : a.figure)}" target="_blank">full figure</a>
+        &nbsp;·&nbsp; <a href="../figures/timeline_${esc(run.id)}.html" target="_blank">adoption timeline</a>
+        &nbsp;·&nbsp; <a href="../figures/usage_${esc(run.id)}.html" target="_blank">top descriptors</a></p>
+      ${dataTable(a, cmp)}
+      <details><summary class="links">Propagated descriptors (${a.propagated.length})</summary>${themes}</details>
+    </div>`;
 }
 
 function showRun(i) {
   const run = RUNS[i];
   const c = counts(run);
+
+  // Key every concept, including any written without an id — keying only on
+  // r.concept_id would drop the work itself on a lookup miss, silently.
+  const byWork = {};
+  run.records.forEach((r, n) => {
+    if (r.kind !== "concept") return;
+    byWork[r.concept_id || `unkeyed-${n}`] = {work: r, critiques: []};
+  });
+  // Critiques with no concept_id predate per-work critiques. Shown at the end
+  // rather than dropped by a silent lookup miss.
+  const orphans = [];
+  for (const r of run.records) {
+    if (r.kind !== "evaluation") continue;
+    if (r.concept_id && byWork[r.concept_id]) byWork[r.concept_id].critiques.push(r);
+    else orphans.push(r);
+  }
   const rounds = {};
-  for (const r of run.records) (rounds[r.round] ??= []).push(r);
+  for (const id of Object.keys(byWork)) (rounds[byWork[id].work.round] ??= []).push(id);
 
-  // Concepts by id, so each critique can name the artist and work it judges.
-  const conceptsById = {};
-  for (const r of run.records)
-    if (r.kind === "concept" && r.concept_id) conceptsById[r.concept_id] = r;
+  let out = `<header class="col">
+      <div class="kernel">${esc(run.id)}</div>
+      <h1>${esc(run.name)} <span class="at">${esc(run.clock)}</span></h1>
+      <p class="lede">${c.concepts} works by ${c.artists} artists, judged
+        ${c.evals} times by ${c.critics} critics over ${c.rounds} rounds.</p>
+    </header>`;
 
-  let out = `<div class="label"><span class="dot"></span>Run</div>
-             <h2>${esc(run.id)}</h2>
-             <div class="when">started ${esc(run.started)}</div>
-             <div class="stats">
-               ${stat(c.rounds, "rounds", "completed")}
-               ${stat(c.concepts, "works generated", "this run")}
-               ${stat(c.evals, "critiques published", "this run")}
-               ${stat(c.artists, "artists", "active")}
-               ${stat(c.critics, "critics", "active")}
-             </div>`;
-
-  // Report section: this run's analysis, if analyze.py has been run on it.
-  if (run.analysis) {
-    const a = run.analysis;
-    const themes = a.propagated.length
-      ? `<ul class="themes">${a.propagated.map(d => `<li>${esc(d)}</li>`).join("")}</ul>`
-      : `<p><em>No descriptor propagated across critics.</em></p>`;
-
-    // Findings, stated as the computed facts behind the research question.
-    let findings = `${a.propagated.length} of ${a.n_clusters} descriptor clusters
-      coined by one critic later appeared in a different critic's writing
-      (similarity threshold ${a.threshold}).`;
-    if (a.prior_vocab_size != null) {
-      findings += ` Descriptors already present in the starting prompts were
-        excluded first: ${a.prior_vocab_subtracted} candidates matched the
-        ${a.prior_vocab_size} seeded terms and were removed.`;
-    }
-    if (a.convergence) {
-      findings += ` Critics' judgments were <span class="verdict">${esc(a.convergence.verdict)}</span>:
-        the score spread across critics went from ${a.convergence.first_spread}
-        in the first round to ${a.convergence.last_spread} in the last.`;
-    } else {
-      findings += ` Not enough scored critiques to assess convergence.`;
-    }
-    if (a.vocab_trend) {
-      const early = (a.vocab_trend.early * 100).toFixed(1);
-      const late = (a.vocab_trend.late * 100).toFixed(1);
-      findings += ` Their shared vocabulary ${a.vocab_trend.pct_change >= 0 ? "grew" : "shrank"}:
-        average pairwise descriptor overlap moved from ${early}% to ${late}%
-        (${a.vocab_trend.pct_change >= 0 ? "+" : ""}${a.vocab_trend.pct_change}% relative)
-        between the first and last rounds.`;
-    }
-
-    // With a control, the figure overlays it and this explanation sits above the figure.
-    const cmp = run.comparison;
-    const figureSrc = cmp ? cmp.figure : a.figure;
-    // Match analyze.py's make_figure(): three stacked panels at 900px.
-    // Plus a little room so nothing clips.
-    const figureHeight = 940;
-    // Supporting figures are separate files, not crammed into the main figure.
-    const supporting = `
-            <p class="supporting">Supporting figures:
-              <a href="../figures/timeline_${esc(run.id)}.html" target="_blank">descriptor adoption timeline &nearr;</a>
-              &middot;
-              <a href="../figures/usage_${esc(run.id)}.html" target="_blank">top-descriptor usage &nearr;</a>
-            </p>`;
-
-    const controlBlock = cmp ? `
-            <div class="label">Baseline vs. control</div>
-            <p>The convergence could have three sources: critics <em>reading each other</em>,
-            critics all judging the <em>same artworks</em>, or shared model <em>priors</em>. To
-            isolate the first, the copper line below replays the identical artworks but with each
-            critic isolated &mdash; it sees only the artworks and its <em>own</em> recent critiques,
-            never another critic's. Same stimulus and priors; the one thing removed is the
-            peer-critique channel, so the <strong>gap between the two lines</strong> is the share
-            of convergence that comes from critics reading one another. Vocabulary overlap grew
-            from ${(cmp.treatment.early*100).toFixed(1)}% to ${(cmp.treatment.late*100).toFixed(1)}%
-            in the baseline but only ${(cmp.control.early*100).toFixed(1)}% to
-            ${(cmp.control.late*100).toFixed(1)}% when critics were isolated.</p>
-            <p>Both conditions are clustered <em>together</em>, in one pooled vocabulary space
-            of ${cmp.n_clusters ? cmp.n_clusters + " clusters" : "shared clusters"}. This matters:
-            clustered separately, whichever run produced more descriptors could end up with
-            coarser clusters and a mechanically higher overlap, and the gap between the lines
-            would partly measure that rather than the peer-critique channel.</p>
-            <p class="caveat"><strong>Read with care:</strong> at round 0 the two conditions are
-            identical by construction (no critiques exist yet) &mdash; the critics' prompts are
-            verified byte-identical there by the test suite &mdash; so any gap at round 0 is
-            sampling noise. From round 1 the isolated critics also carry their own regenerated
-            history, so the conditions differ in more than the peer channel alone.
-            With a single run per condition the direction is suggestive, not conclusive &mdash;
-            replication with several control runs would put an error band on it.</p>` : "";
-
-    out += `<div class="report">
-            <details class="about">
-            <summary>What we're looking for &amp; how we measure it</summary>
-            <p>Does a new aesthetic descriptor coined by one critic &mdash; present in no
-            starting prompt &mdash; propagate to other critics over rounds, and do critics'
-            judgments converge or split?</p>
-            <div class="label">How we measure it</div>
-            <ul class="method">
-              <li><strong>Extract descriptors.</strong> From each critic's writing, take the
-                adjective-bearing noun phrases (spaCy part-of-speech tags) &mdash; e.g.
-                &ldquo;spectral glow&rdquo; &mdash; as candidate aesthetic descriptors.</li>
-              <li><strong>Subtract the prior vocabulary.</strong> Remove any descriptor already
-                in the system prompt or an artist/critic disposition (exact match or embedding
-                similarity), so only language coined <em>during</em> the run can count.</li>
-              <li><strong>Measure adoption as a rate, not a count.</strong> Per round, of all
-                the vocabulary a critic could have borrowed from another critic, the share
-                actually in use. A raw count is uninterpretable because the borrowable pool
-                grows every round; a cumulative curve can only rise, so it cannot show whether
-                adoption is building or petering out. Round 0 has an empty pool and is therefore
-                undefined, not zero.</li>
-              <li><strong>Cluster near-synonyms.</strong> Group descriptors by sentence-embedding
-                similarity (threshold ${a.threshold}) so paraphrases count as one descriptor.
-                Clustering is agglomerative with complete linkage, so the grouping does not
-                depend on the order descriptors happen to be read in, and two descriptors are
-                never pooled merely because both resemble some third one.</li>
-              <li><strong>Propagation.</strong> A descriptor &ldquo;propagated&rdquo; if, after first
-                appearing in one critic's writing, it later appears in a <em>different</em>
-                critic's writing.</li>
-              <li><strong>Convergence.</strong> Vocabulary overlap = average pairwise Dice of
-                critics' descriptor sets per round; score spread = standard deviation of the
-                critics' scores per round.</li>
-            </ul>
-            </details>
-            <div class="label">Findings</div>
-            <p>${findings}</p>
-            ${controlBlock}
-            <div class="label">Figure</div>
-            <p><a href="${esc(figureSrc)}" target="_blank">open full figure &nearr;</a></p>
-            <iframe src="${esc(figureSrc)}" style="height:${figureHeight}px" loading="lazy"></iframe>
-            ${supporting}
-            ${dataTable(a, cmp)}
-            <details class="propagated">
-              <summary>Propagated descriptors (${a.propagated.length})</summary>
-              ${themes}
-            </details></div>`;
-  } else {
-    out += `<div class="report"><div class="label">Report</div>
-            <p>Not analyzed yet. Run <code>uv run python analyze.py logs/${esc(run.id)}.jsonl</code>,
-            then regenerate this page.</p></div>`;
+  out += analysisBlock(run);
+  out += '<div class="col">';
+  for (const idx of Object.keys(rounds).sort((x, y) => x - y)) {
+    out += `<div class="round">Round ${idx} &nbsp;/&nbsp; ${rounds[idx].length} works</div>`;
+    for (const id of rounds[idx]) out += workBlock(byWork[id]);
   }
-
-  for (const idx of Object.keys(rounds).sort((a, b) => a - b)) {
-    out += `<div class="round-label label">Round ${idx}</div>`;
-    for (const r of rounds[idx]) {
-      const score = r.score != null ? `<span class="score">${r.score.toFixed(2)}</span>` : "";
-      // For critiques, name the artist and quote the start of the work judged.
-      let target = "";
-      const work = r.kind === "evaluation" && r.concept_id && conceptsById[r.concept_id];
-      if (work) {
-        // Prefer the work's title; fall back to an excerpt for old runs.
-        const named = work.title ? esc(work.title)
-          : esc(work.content.slice(0, 110)) + (work.content.length > 110 ? "&hellip;" : "");
-        target = `<div class="target">critique of <span class="artist">${esc(work.agent)}</span>'s
-                  &ldquo;${named}&rdquo;</div>`;
-      }
-      const title = r.kind === "concept" && r.title
-        ? `<div class="work-title">${esc(r.title)}</div>` : "";
-      out += `<div class="card ${r.kind}">${score}<span class="who">${esc(r.agent)}</span>
-              <span class="role-tag">${r.role}</span>${title}${target}
-              <div class="content">${esc(r.content)}</div>
-              <div class="reasoning">${esc(r.reasoning)}</div></div>`;
-    }
+  if (orphans.length) {
+    out += `<div class="round">Unattributed critiques</div>
+      <p class="quiet">${orphans.length} critique${orphans.length === 1 ? "" : "s"} in this log
+      carry no artwork id — written before critiques were linked to one work — so they cannot be
+      placed under a work.</p>
+      ${orphans.map(o => `<div class="crit">
+        <div class="crit-head"><span class="crit-who">${esc(o.agent)}</span>
+          <span class="quiet">round ${o.round}</span>
+          ${o.score != null ? `<span class="crit-score">${o.score.toFixed(2)}</span>` : ""}</div>
+        <div class="crit-text">${esc(o.content)}</div></div>`).join("")}`;
   }
+  out += "</div>";
+
   document.getElementById("detail-body").innerHTML = out;
   document.getElementById("archive").style.display = "none";
   document.getElementById("detail").style.display = "block";
   window.scrollTo(0, 0);
 }
 
-// Overview stats across all runs, in the spirit of the reference design.
-const totals = RUNS.map(counts);
-document.getElementById("overview").innerHTML =
-  stat(RUNS.length, "runs", "archived") +
-  stat(totals.reduce((s, c) => s + c.concepts, 0), "works generated", "all runs") +
-  stat(totals.reduce((s, c) => s + c.evals, 0), "critiques published", "all runs") +
-  stat(RUNS.length ? totals[0].artists : 0, "artists", "latest run") +
-  stat(RUNS.length ? totals[0].critics : 0, "critics", "latest run");
-
-const tbody = document.getElementById("run-list");
+const list = document.getElementById("run-list");
 RUNS.forEach((run, i) => {
   const c = counts(run);
-  const tr = document.createElement("tr");
-  tr.className = "run-row";
-  tr.innerHTML = `<td class="run-date">${esc(run.started)}</td><td>${c.rounds}</td>
-                  <td>${c.concepts}</td><td>${c.evals}</td>
-                  <td>${c.artists}</td><td>${c.critics}</td>
-                  <td>${run.analysis ? "analyzed" : "&mdash;"}</td>`;
-  tr.onclick = () => showRun(i);
-  tbody.appendChild(tr);
+  const titles = run.records.filter(r => r.kind === "concept" && r.title)
+                            .slice(0, 3).map(r => r.title).join(" · ");
+  const el = document.createElement("div");
+  el.className = "run runs-cols";
+  el.innerHTML = `
+    <div class="run-name">${esc(run.name)}<span class="clock">${esc(run.clock)}</span></div>
+    <div class="run-n">${c.concepts}</div>
+    <div class="run-n">${c.evals}</div>
+    <div class="run-n">${c.rounds}</div>
+    <div class="run-titles">${titles ? esc(titles) : "&mdash;"}</div>`;
+  el.onclick = () => showRun(i);
+  list.appendChild(el);
 });
 </script>
 </body>
