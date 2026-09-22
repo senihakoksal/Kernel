@@ -126,13 +126,15 @@ def main() -> None:
     fig = make_figure(treat["vocab"], treat["spread"], treat["rate"],
                       control_vocab=ctrl["vocab"], control_spread=ctrl["spread"],
                       control_rate=ctrl["rate"])
-    fig.write_html(FIGURE_DIR / f"compare_{treatment_path.stem}.html")
+    fig.write_html(FIGURE_DIR / f"compare_{treatment_path.stem}.html",
+                   include_plotlyjs="cdn")
 
     # Supporting figure: the treatment's adoption timeline. Treatment only, per
     # the figure spec; the control's propagated count is reported alongside.
     timeline = make_timeline_figure(treat["occ"])
     if timeline is not None:
-        timeline.write_html(FIGURE_DIR / f"timeline_{treatment_path.stem}.html")
+        timeline.write_html(FIGURE_DIR / f"timeline_{treatment_path.stem}.html",
+                            include_plotlyjs="cdn")
     summary = {
         "treatment_run_id": treatment_path.stem,
         "control_run_id": control_path.stem,

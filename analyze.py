@@ -893,14 +893,15 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
     FIGURE_DIR.mkdir(exist_ok=True)
     fig = make_figure(vocab_df, spread_df, rate_df)
     fig_path = FIGURE_DIR / f"analysis_{log_path.stem}.html"
-    fig.write_html(fig_path)
+    fig.write_html(fig_path, include_plotlyjs="cdn")
 
     # Supporting figures live in their own files rather than being crammed into
     # the main one: the adoption timeline, and the top-descriptor usage heatmap
     # the three-panel figure no longer carries.
     timeline = make_timeline_figure(occ)
     if timeline is not None:
-        timeline.write_html(FIGURE_DIR / f"timeline_{log_path.stem}.html")
+        timeline.write_html(FIGURE_DIR / f"timeline_{log_path.stem}.html",
+                            include_plotlyjs="cdn")
     heatmap = usage_heatmap(usage_df, top_labels)
     if heatmap is not None:
         go.Figure(heatmap).update_layout(
@@ -909,7 +910,8 @@ def write_condition_outputs(log_path: Path, critic_evals: pd.DataFrame,
                        x=0, xanchor="left", font=dict(size=13)),
             plot_bgcolor=PALETTE["surface"], paper_bgcolor=PALETTE["surface"],
             margin=dict(l=300, r=40, t=80, b=56),
-        ).write_html(FIGURE_DIR / f"usage_{log_path.stem}.html")
+        ).write_html(FIGURE_DIR / f"usage_{log_path.stem}.html",
+                     include_plotlyjs="cdn")
     summary = {
         "run_id": log_path.stem,
         "n_clusters": int(occ["cluster"].nunique()),
