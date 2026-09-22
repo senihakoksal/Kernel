@@ -2,7 +2,10 @@
 .DS_Store
 __pycache__/
 *.pyc
-logs/
-figures/
-site/
+# Anchored to the repo root on purpose. Unanchored, 'figures/' matches at
+# any depth — which silently excluded docs/figures/, the published copies,
+# and would have shipped a Pages site with every figure link broken.
+/logs/
+/figures/
+/site/
 .venv/

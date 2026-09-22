@@ -11,13 +11,27 @@ Usage:
     uv run python report.py        # then open site/index.html
 """
 
+import argparse
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 LOG_DIR = Path("logs")
 FIGURE_DIR = Path("figures")
 SITE_DIR = Path("site")
+DOCS_DIR = Path("docs")
+
+
+def figure_name(kind: str, run_id: str) -> str | None:
+    """The figure's filename if it was actually written, else None.
+
+    Not every run produces every figure: a run where nothing propagated has no
+    timeline, and a run with no critic evaluations has none at all. The page
+    used to link all of them unconditionally, which published dead links.
+    """
+    name = f"{kind}_{run_id}.html"
+    return name if (FIGURE_DIR / name).exists() else None
 
 
 def load_analysis(run_id: str) -> dict | None:
@@ -26,8 +40,11 @@ def load_analysis(run_id: str) -> dict | None:
     if not summary_path.exists():
         return None
     summary = json.loads(summary_path.read_text())
-    # The figure sits next to the summary; the page links to it relative to site/.
-    summary["figure"] = f"../figures/analysis_{run_id}.html"
+    # Bare filenames: the page prepends whichever prefix the build is for, so
+    # the same markup serves site/ (../figures/) and docs/ (figures/).
+    summary["figure"] = figure_name("analysis", run_id)
+    summary["timeline"] = figure_name("timeline", run_id)
+    summary["usage"] = figure_name("usage", run_id)
     return summary
 
 
@@ -37,7 +54,7 @@ def load_comparison(run_id: str) -> dict | None:
     if not summary_path.exists():
         return None
     summary = json.loads(summary_path.read_text())
-    summary["figure"] = f"../figures/compare_{run_id}.html"
+    summary["figure"] = figure_name("compare", run_id)
     return summary
 
 
@@ -266,6 +283,9 @@ PAGE = """<!DOCTYPE html>
 
 <script>
 const RUNS = __RUNS_JSON__;
+// Where the figures live relative to this page. site/ and docs/ nest
+// differently, so the build supplies it rather than the markup assuming it.
+const FIG = "__FIG_PREFIX__";
 
 function esc(s) {
   const d = document.createElement("div");
@@ -432,17 +452,24 @@ function analysisBlock(run) {
     ? `<div class="themes">${a.propagated.map(t => `<span class="theme">${esc(t)}</span>`).join("")}</div>`
     : "<p class='quiet'>Nothing propagated across critics.</p>";
 
+  // Link only figures that were actually written. A run where nothing
+  // propagated has no timeline; one with no critic evaluations has no figures
+  // at all. Linking them regardless published dead links.
+  const main = (cmp && cmp.figure) || a.figure;
+  const extra = [["adoption timeline", a.timeline], ["top descriptors", a.usage]]
+    .filter(pair => pair[1])
+    .map(pair => ` &nbsp;·&nbsp; <a href="${FIG}${esc(pair[1])}" target="_blank">${pair[0]}</a>`)
+    .join("");
+
   return `<div class="col"><details class="analysis">
       <summary>Analysis</summary>
       <p>${findings}</p>${control}
     </details></div>
-    <div class="wide"><div class="fig">
-      <iframe src="${esc(cmp ? cmp.figure : a.figure)}" style="height:940px" loading="lazy"></iframe>
-    </div></div>
+    ${main ? `<div class="wide"><div class="fig">
+      <iframe src="${FIG}${esc(main)}" style="height:940px" loading="lazy"></iframe>
+    </div></div>` : ""}
     <div class="col">
-      <p class="links"><a href="${esc(cmp ? cmp.figure : a.figure)}" target="_blank">full figure</a>
-        &nbsp;·&nbsp; <a href="../figures/timeline_${esc(run.id)}.html" target="_blank">adoption timeline</a>
-        &nbsp;·&nbsp; <a href="../figures/usage_${esc(run.id)}.html" target="_blank">top descriptors</a></p>
+      <p class="links">${main ? `<a href="${FIG}${esc(main)}" target="_blank">full figure</a>` : ""}${extra}</p>
       ${dataTable(a, cmp)}
       <details><summary class="links">Propagated descriptors (${a.propagated.length})</summary>${themes}</details>
     </div>`;
@@ -524,14 +551,76 @@ RUNS.forEach((run, i) => {
 """
 
 
+def render(runs: list[dict], fig_prefix: str) -> str:
+    """The page, with the run data and the figure prefix substituted in."""
+    return (PAGE.replace("__RUNS_JSON__", json.dumps(runs))
+                .replace("__FIG_PREFIX__", fig_prefix))
+
+
+def referenced_figures(runs: list[dict]) -> set[str]:
+    """Every figure the page actually links, and nothing else.
+
+    Copying all of figures/ would drag in the control-arm plots the page never
+    links; copying from the page's own references means what ships is exactly
+    what is reachable.
+    """
+    names: set[str] = set()
+    for run in runs:
+        for summary in (run.get("analysis"), run.get("comparison")):
+            if not summary:
+                continue
+            for key in ("figure", "timeline", "usage"):
+                if summary.get(key):
+                    names.add(summary[key])
+    return names
+
+
+def publish(runs: list[dict]) -> Path:
+    """Assemble a self-contained docs/ for GitHub Pages.
+
+    Pages serves committed files, and logs/, figures/ and site/ are all ignored
+    — so publishing means writing a directory that IS committed, holding the
+    rendered page and the figures it links. docs/ on the default branch is the
+    one Pages source that needs no second branch and no workflow.
+    """
+    DOCS_DIR.mkdir(exist_ok=True)
+    (DOCS_DIR / "figures").mkdir(exist_ok=True)
+    # Figures sit beside the page here, not a level up as they do from site/.
+    (DOCS_DIR / "index.html").write_text(render(runs, "figures/"))
+
+    wanted = referenced_figures(runs)
+    for name in sorted(wanted):
+        shutil.copyfile(FIGURE_DIR / name, DOCS_DIR / "figures" / name)
+    # Drop anything a previous publish left behind that is no longer linked.
+    for stale in (DOCS_DIR / "figures").glob("*.html"):
+        if stale.name not in wanted:
+            stale.unlink()
+
+    size = sum(f.stat().st_size for f in DOCS_DIR.rglob("*") if f.is_file())
+    print(f"Published {DOCS_DIR}/ — 1 page + {len(wanted)} figures, "
+          f"{size / 1e6:.1f} MB total.")
+    print("Commit docs/, then enable GitHub Pages: Settings -> Pages -> "
+          "Source: main, folder /docs")
+    return DOCS_DIR
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Render the run archive page.")
+    parser.add_argument("--publish", action="store_true",
+                        help="also assemble docs/ for GitHub Pages")
+    args = parser.parse_args()
+
     runs = load_runs()
     if not runs:
         raise SystemExit("No logs found in logs/. Run run.py first.")
+
     SITE_DIR.mkdir(exist_ok=True)
     out = SITE_DIR / "index.html"
-    out.write_text(PAGE.replace("__RUNS_JSON__", json.dumps(runs)))
+    out.write_text(render(runs, "../figures/"))
     print(f"Wrote {out} ({len(runs)} runs). Open it in a browser.")
+
+    if args.publish:
+        publish(runs)
 
 
 if __name__ == "__main__":
