@@ -161,8 +161,18 @@ PAGE = """<!DOCTYPE html>
      set at this size, because it is the subject and everything else is about it. */
   .work-text { font-size: 1.28rem; line-height: 1.68; color: var(--ink);
                font-weight: 300; white-space: pre-wrap; margin: 0; }
-  .work-why { margin: 1.5rem 0 0; font-size: .88rem; color: var(--ink-3);
-              max-width: 32rem; }
+  /* The `reasoning` field: the agent's own stated rationale, not part of the
+     work or the critique. Unlabelled it read as a trailing paragraph of the
+     thing above it — after an artwork especially, as more artwork. The rule and
+     the key name it, and the key uses the field's own name so a reader can map
+     the page back onto the .jsonl. */
+  .why { margin-top: 1.4rem; padding-left: 1rem; border-left: 1px solid var(--rule);
+         max-width: 34rem; }
+  .why-k { display: block; font-family: var(--mono); font-size: .64rem;
+           color: var(--ink-3); letter-spacing: .04em; margin-bottom: .3rem; }
+  .why-t { font-size: .88rem; color: var(--ink-3); line-height: 1.6; }
+  .crit .why { margin-top: .9rem; }
+  .crit .why-t { font-size: .84rem; }
 
   /* Reception: the shape of six judgements, before any of their words. */
   .recv { margin-top: 2.5rem; border-top: 1px solid var(--rule); padding-top: 1.1rem; }
@@ -196,7 +206,7 @@ PAGE = """<!DOCTYPE html>
                 margin-left: auto; font-variant-numeric: tabular-nums; }
   .crit-text { font-size: .95rem; line-height: 1.65; color: var(--ink-2);
                white-space: pre-wrap; }
-  .crit-why { margin-top: .55rem; font-size: .84rem; color: var(--ink-3); }
+
 
   /* --- analysis: reference, not the headline --------------------------- */
   .analysis { border-top: 1px solid var(--rule); margin-top: 1rem; padding-top: 1.1rem; }
@@ -296,6 +306,15 @@ function track(crits) {
             ${dots}</div>`;
 }
 
+/* The `reasoning` field, labelled. One key for artists and critics alike: it is
+   the agent's own account of what it just did, and naming it that way keeps the
+   page mapping onto the log, where both roles write to the same field. */
+function why(text) {
+  if (!text) return "";
+  return `<div class="why"><span class="why-k">Agent's reasoning</span>
+            <span class="why-t">${esc(text)}</span></div>`;
+}
+
 /* One artwork, then its reception. The critiques are collapsed because there
    are ten times more words of criticism than of art, and open by default the
    commentary buries the work it is about. */
@@ -315,7 +334,7 @@ function workBlock(entry) {
       <div class="crit-head"><span class="crit-who">${esc(c.agent)}</span>
         ${c.score != null ? `<span class="crit-score">${c.score.toFixed(2)}</span>` : ""}</div>
       <div class="crit-text">${esc(c.content)}</div>
-      ${c.reasoning ? `<div class="crit-why">${esc(c.reasoning)}</div>` : ""}
+      ${why(c.reasoning)}
     </div>`).join("");
 
   const reception = crits.length ? `
@@ -330,7 +349,7 @@ function workBlock(entry) {
       <div class="work-by">${esc(w.agent)}<span class="quiet"> · ${esc(w.concept_id || "")}</span></div>
       <h2 class="work-title">${w.title ? esc(w.title) : "Untitled"}</h2>
       <p class="work-text">${esc(w.content)}</p>
-      ${w.reasoning ? `<p class="work-why">${esc(w.reasoning)}</p>` : ""}
+      ${why(w.reasoning)}
       ${reception}
     </article>`;
 }
