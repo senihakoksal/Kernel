@@ -212,7 +212,7 @@ PAGE = """<!DOCTYPE html>
   .recv summary { cursor: pointer; font-size: .8rem; color: var(--accent); list-style: none; }
   .recv summary::-webkit-details-marker { display: none; }
   .recv summary::before { content: "+ "; }
-  .recv details[open] summary::before { content: "\2212 "; }
+  .recv details[open] summary::before { content: "− "; }
   .recv summary:hover { text-decoration: underline; }
 
   .crit { padding: 1.4rem 0; border-bottom: 1px solid var(--rule); }
@@ -231,7 +231,7 @@ PAGE = """<!DOCTYPE html>
                         list-style: none; }
   .analysis > summary::-webkit-details-marker { display: none; }
   .analysis > summary::before { content: "+ "; }
-  .analysis[open] > summary::before { content: "\2212 "; }
+  .analysis[open] > summary::before { content: "− "; }
   .analysis p { font-size: .92rem; color: var(--ink-2); max-width: 40rem; }
   .analysis .caveat { color: var(--ink-3); font-size: .85rem; }
   .fig { margin: 1.75rem 0 .5rem; }
