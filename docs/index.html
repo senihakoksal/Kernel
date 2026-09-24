@@ -49,6 +49,12 @@
   .intro p:first-child { font-size: 1.12rem; line-height: 1.6; color: var(--ink);
                          font-weight: 300; margin-bottom: 1.4rem; }
   .intro p:last-child { margin-bottom: 0; }
+  /* The URL is shown rather than hidden behind link text: a reader deciding
+     whether to follow it wants to see where it goes. */
+  .intro p.source { margin-top: 1.9rem; padding-top: 1.2rem;
+                    border-top: 1px solid var(--rule); font-size: .88rem;
+                    color: var(--ink-3); }
+  .intro p.source a { font-family: var(--mono); font-size: .84rem; }
 
   /* --- archive: a quiet typographic list, not cards --------------------- */
   .runs { border-top: 1px solid var(--rule); }
@@ -186,6 +192,9 @@
       <p>Each run below is the complete record: every artwork, every critique, every
       score. The artworks are part of the experiment, but they are also meant to be
       read.</p>
+      <p class="source">Code, data and method:
+        <a href="https://github.com/senihakoksal/Kernel" target="_blank"
+           rel="noopener">github.com/senihakoksal/Kernel</a></p>
     </div>
   </header>
   <div class="col">
