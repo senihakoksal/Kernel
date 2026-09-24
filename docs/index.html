@@ -44,6 +44,11 @@
   h1 .at { color: var(--ink-3); font-size: .55em; letter-spacing: 0;
            font-family: var(--mono); margin-left: .5rem; vertical-align: .18em; }
   .lede { color: var(--ink-3); font-size: .95rem; margin: 0 0 4.5rem; max-width: 34rem; }
+  .intro { max-width: 36rem; margin: 0 0 5rem; }
+  .intro p { font-size: .97rem; line-height: 1.72; color: var(--ink-2); margin: 0 0 1.15rem; }
+  .intro p:first-child { font-size: 1.12rem; line-height: 1.6; color: var(--ink);
+                         font-weight: 300; margin-bottom: 1.4rem; }
+  .intro p:last-child { margin-bottom: 0; }
 
   /* --- archive: a quiet typographic list, not cards --------------------- */
   .runs { border-top: 1px solid var(--rule); }
@@ -167,8 +172,21 @@
   <header class="col">
     <div class="kernel">Observation Kernel</div>
     <h1>Studio archive</h1>
-    <p class="lede">Artists invent artworks in language; critics judge them and read
-    each other. Each run is a studio that ran for a number of rounds.</p>
+    <div class="intro">
+      <p>Kernel is an experimental studio of artist and art critic agents. The artists
+      create artworks as text. The critics read them, judge them, and respond round
+      after round, each able to see what the others have written.</p>
+      <p>The project asks a simple question: can a shared critical vocabulary emerge
+      through interaction, or do the critics merely sound alike because they are built
+      from the same underlying model?</p>
+      <p>Every run is paired with a control. The same artworks are replayed to the same
+      critics in isolation, with each critic seeing only its own previous writing.
+      Comparing the two lets us examine what changes when the critics are exposed to
+      one another.</p>
+      <p>Each run below is the complete record: every artwork, every critique, every
+      score. The artworks are part of the experiment, but they are also meant to be
+      read.</p>
+    </div>
   </header>
   <div class="col">
     <div class="runs-head runs-cols"><div>run</div><div>works</div>
