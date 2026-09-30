@@ -1,0 +1,86 @@
+{
+  "feed_window": 3,
+  "n_critiques": 30,
+  "n_descriptors": 349,
+  "n_clusters": 310,
+  "n_seed_terms": 58,
+  "n_subtracted": 9,
+  "n_propagated": 19,
+  "propagated_sample": [
+    "aerial photography",
+    "best work",
+    "breath - width bands",
+    "concept 's best formal decision",
+    "concept 's most precise decision"
+  ],
+  "overlap": [
+    {
+      "round": 0,
+      "dice": 0.063935
+    },
+    {
+      "round": 1,
+      "dice": 0.118462
+    },
+    {
+      "round": 2,
+      "dice": 0.053914
+    },
+    {
+      "round": 3,
+      "dice": 0.079192
+    },
+    {
+      "round": 4,
+      "dice": 0.111026
+    }
+  ],
+  "adoption_rate": [
+    {
+      "round": 1,
+      "uses": 4,
+      "opportunities": 115,
+      "rate": 0.034783
+    },
+    {
+      "round": 2,
+      "uses": 4,
+      "opportunities": 240,
+      "rate": 0.016667
+    },
+    {
+      "round": 3,
+      "uses": 5,
+      "opportunities": 359,
+      "rate": 0.013928
+    },
+    {
+      "round": 4,
+      "uses": 10,
+      "opportunities": 388,
+      "rate": 0.025773
+    }
+  ],
+  "score_spread": [
+    {
+      "round": 0,
+      "spread": 0.073522
+    },
+    {
+      "round": 1,
+      "spread": 0.023921
+    },
+    {
+      "round": 2,
+      "spread": 0.034238
+    },
+    {
+      "round": 3,
+      "spread": 0.030822
+    },
+    {
+      "round": 4,
+      "spread": 0.032745
+    }
+  ]
+}

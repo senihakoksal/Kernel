@@ -1,0 +1,9 @@
+{
+  "run_id": "regression_run",
+  "model": "claude-sonnet-4-6",
+  "rounds": 5,
+  "feed_window": 3,
+  "n_artists": 2,
+  "n_critics": 3,
+  "note": "subset of run_20260910_154044 \u2014 see build_fixture.py"
+}
