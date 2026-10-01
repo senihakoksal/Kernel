@@ -55,7 +55,15 @@ def load_comparison(run_id: str) -> dict | None:
         return None
     summary = json.loads(summary_path.read_text())
     summary["figure"] = figure_name("compare", run_id)
+    if summary.get("control_run_id"):
+        summary["control_behaviour"] = load_eval(summary["control_run_id"])
     return summary
+
+
+def load_eval(run_id: str) -> dict | None:
+    """The eval_agents.py summary for a log, if it has been evaluated."""
+    path = FIGURE_DIR / f"eval_{run_id}.json"
+    return json.loads(path.read_text()) if path.exists() else None
 
 
 def load_runs() -> list[dict]:
@@ -77,6 +85,7 @@ def load_runs() -> list[dict]:
             "records": records,
             "analysis": load_analysis(path.stem),
             "comparison": load_comparison(path.stem),
+            "behaviour": load_eval(path.stem),
         })
     return runs
 
@@ -245,6 +254,15 @@ PAGE = """<!DOCTYPE html>
   .analysis[open] > summary::before { content: "− "; }
   .analysis p { font-size: .92rem; color: var(--ink-2); max-width: 40rem; }
   .analysis .caveat { color: var(--ink-3); font-size: .85rem; }
+  /* Question above, answer below — the figures are in four different units, so
+     each one is stated inside the sentence that says what it means. */
+  .qa { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); max-width: 42rem; }
+  .qa:last-of-type { border-bottom: 0; }
+  .qa.section { border-top: 1px solid var(--rule-strong, var(--rule)); }
+  .qa .q { font-size: .95rem; color: var(--ink); margin-bottom: .4rem; }
+  .qa .a { font-size: .92rem; color: var(--ink-2); line-height: 1.65; }
+  .qa .a b { font-family: var(--mono); font-size: .88rem; font-weight: 400;
+             color: var(--ink); }
   .fig { margin: 1.75rem 0 .5rem; }
   .fig iframe { width: 100%; border: 0; display: block; }
   .links { font-size: .8rem; color: var(--ink-3); }
@@ -291,7 +309,9 @@ PAGE = """<!DOCTYPE html>
       <p>Each run below is the complete record: every artwork, every critique, every
       score. The artworks are part of the experiment, but they are also meant to be
       read.</p>
-      <p class="source">Code, data and method:
+      <p class="source">Checks on the agents themselves:
+        <a href="evals.html">evals</a><br>
+        Code, data and method:
         <a href="https://github.com/senihakoksal/Kernel" target="_blank"
            rel="noopener">github.com/senihakoksal/Kernel</a></p>
     </div>
@@ -578,10 +598,248 @@ RUNS.forEach((run, i) => {
 """
 
 
+EVAL_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observation Kernel — evals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --wall: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #7c7b76;
+    --rule: #e6e5e1; --accent: #2a78d6;
+    /* Status colours are reserved for verdicts and used nowhere else. Checked
+       against this surface: green 4.95:1, amber 4.74:1, red 5.22:1 — all AA for
+       text. Every cell also prints its measured value, so the colour is a second
+       signal rather than the only one. */
+    --pass: #1a7f37; --warn: #9a6700; --fail: #cf222e;
+    --pass-bg: #eaf4ec; --warn-bg: #faf2e3; --fail-bg: #fdecec;
+    --text: "Inter", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--wall); }
+  body { margin: 0; background: var(--wall); color: var(--ink); font-family: var(--text);
+         font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .col { max-width: 43rem; margin: 0 auto; padding: 0 1.75rem; }
+  .wide { max-width: 82rem; margin: 0 auto; padding: 0 1.75rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 5.5rem 0 0; }
+  .kernel { font-family: var(--mono); font-size: .7rem; color: var(--ink-3); }
+  h1 { font-weight: 300; font-size: 2.4rem; letter-spacing: -.025em; line-height: 1.1;
+       margin: .9rem 0 .6rem; }
+  .intro { max-width: 36rem; margin: 0 0 3rem; }
+  .intro p { font-size: .97rem; line-height: 1.72; color: var(--ink-2); margin: 0 0 1.1rem; }
+  .intro p:first-child { font-size: 1.12rem; color: var(--ink); font-weight: 300; }
+  h2 { font-weight: 400; font-size: 1.25rem; letter-spacing: -.015em;
+       margin: 4rem 0 .5rem; }
+  .note { color: var(--ink-3); font-size: .88rem; max-width: 40rem; margin: 0 0 1.5rem; }
+
+  /* The matrix: runs down, criteria across. Reading a column tells you whether a
+     prompt change moved that check. */
+  .matrix { border-collapse: collapse; font-size: .8rem; width: 100%; }
+  .matrix th, .matrix td { border-bottom: 1px solid var(--rule); padding: .5rem .5rem;
+                           text-align: center; vertical-align: middle; }
+  .matrix th { font-weight: 400; font-size: .68rem; color: var(--ink-3);
+               vertical-align: bottom; line-height: 1.25; padding-bottom: .7rem; }
+  .matrix th.run, .matrix td.run { text-align: left; white-space: nowrap;
+                                   font-family: var(--mono); font-size: .76rem; }
+  .matrix td.run a { color: var(--ink); }
+  .matrix td.v { font-family: var(--mono); font-size: .74rem;
+                 font-variant-numeric: tabular-nums; }
+  .pass { color: var(--pass); background: var(--pass-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .fail { color: var(--fail); background: #fdecec; font-weight: 500; }
+  .na   { color: var(--ink-3); }
+  .legend { display: flex; gap: 1.4rem; font-size: .76rem; color: var(--ink-3);
+            margin: 1rem 0 0; flex-wrap: wrap; }
+  .legend b { font-weight: 400; padding: .1rem .4rem; font-family: var(--mono);
+              font-size: .72rem; }
+
+  /* Measurements: no verdict, because convergence is the subject of study. */
+  .meas { border-collapse: collapse; font-size: .85rem; width: 100%; margin-top: 1rem; }
+  .meas th, .meas td { border-bottom: 1px solid var(--rule); padding: .55rem .9rem .55rem 0;
+                       text-align: left; }
+  .meas th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
+  .meas td.n { font-family: var(--mono); font-size: .78rem;
+               font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rules { font-size: .82rem; color: var(--ink-3); }
+  .rules code { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
+  footer { margin: 6rem 0 5rem; font-size: .85rem; color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+<header class="col">
+  <div class="kernel"><a href="index.html">Observation Kernel</a></div>
+  <h1>Evals</h1>
+  <div class="intro">
+    <p>Did the agents do what their prompts asked? These checks are about the
+    instrument, not the result &mdash; they are run against every log and they have
+    right answers.</p>
+    <p>Change a prompt, run again, and read down a column: a green that turns red is
+    a change you caused. Nothing here uses a model to judge, so it costs nothing to
+    re-run as often as you like.</p>
+    <p>Convergence is deliberately absent from the pass/fail criteria. Critics growing
+    alike is the thing the project studies, so a red light on it would be a category
+    error. Those appear further down as measurements, with no verdict.</p>
+  </div>
+</header>
+
+<div class="wide">
+  <h2>Criteria</h2>
+  <p class="note">One row per run, newest first. Each cell shows the measured value;
+  the colour is a second signal, never the only one. Hover a cell for the rule it was
+  judged against.</p>
+  <div style="overflow-x:auto"><table class="matrix" id="matrix"></table></div>
+  <div class="legend">
+    <span><b class="pass">pass</b> meets the threshold</span>
+    <span><b class="warn">warn</b> below it but not badly</span>
+    <span><b class="fail">fail</b> the prompt is not being followed</span>
+    <span><b class="na">&mdash;</b> not applicable to this run</span>
+  </div>
+</div>
+
+<div class="col">
+  <h2>Measurements</h2>
+  <p class="note">No pass or fail. These are what the run found, and where a control
+  exists the isolated arm is given beside it &mdash; what survives isolation is shared
+  instinct rather than influence. Runs with only a handful of critiques are marked:
+  these statistics need a sample, and the early June runs do not have one.</p>
+  <table class="meas" id="measurements"></table>
+
+  <h2>Thresholds</h2>
+  <p class="note">Conventions, not laws. Stated here so they can be argued with rather
+  than discovered by reading the source.</p>
+  <div class="rules" id="rules"></div>
+
+  <footer>
+    <a href="index.html">&larr; studio archive</a> &nbsp;&middot;&nbsp;
+    <a href="https://github.com/senihakoksal/Kernel" target="_blank" rel="noopener">github.com/senihakoksal/Kernel</a>
+  </footer>
+</div>
+
+<script>
+const EVALS = __EVALS_JSON__;
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : s;
+  return d.innerHTML;
+}
+
+/* Column order is the union across runs, kept stable so a column means the same
+   thing in every row even when a run skipped that check. */
+const columns = [];
+for (const e of EVALS)
+  for (const c of e.criteria)
+    if (!columns.includes(c.check)) columns.push(c.check);
+
+const shortName = c => c
+  .replace("artists: ", "A&nbsp;")
+  .replace("critics: ", "C&nbsp;")
+  .replace("content ", "")
+  .replace("reasoning <= 2 sentences", "reasoning <=2")
+  .replace("role fields correct", "role fields")
+  .replace("score present and in range", "score valid")
+  .replace("title <= 6 words", "title <=6")
+  .replace("critiques judge the assigned work", "on&nbsp;target")
+  .replace("artworks are not restatements", "new&nbsp;works")
+  .replace("every critic discriminates", "discriminates");
+
+let head = '<thead><tr><th class="run">run</th>'
+  + columns.map(c => `<th>${shortName(c)}</th>`).join("") + "</tr></thead>";
+let body = "<tbody>" + EVALS.map(e => {
+  const by = {};
+  for (const c of e.criteria) by[c.check] = c;
+  const cells = columns.map(col => {
+    const c = by[col];
+    if (!c) return '<td class="na">&mdash;</td>';
+    const shown = c.detail.length > 14 ? c.detail.split(" ")[0] : c.detail;
+    return `<td class="v ${c.verdict}" title="${esc(c.rule)} — measured ${esc(c.detail)}">`
+         + `${esc(shown)}</td>`;
+  }).join("");
+  return `<tr><td class="run"><a href="index.html">${esc(e.label)}</a></td>${cells}</tr>`;
+}).join("") + "</tbody>";
+document.getElementById("matrix").innerHTML = head + body;
+
+/* Measurements: stated in units, with the control beside the treatment. */
+const pct = v => v == null ? "&mdash;" : (v * 100).toFixed(0) + "%";
+const num = (v, d = 3) => v == null ? "&mdash;" : v.toFixed(d);
+let rows = `<thead><tr><th>run</th><th>critiques</th>
+  <th>critics agree<br>(rank correlation)</th>
+  <th>critics tellable apart<br>(vs chance)</th><th>change per round</th></tr></thead><tbody>`;
+for (const e of EVALS) {
+  const c = e.control;
+  const rel = e.reliability && e.reliability.mean_pairwise_spearman;
+  const crel = c && c.reliability && c.reliability.mean_pairwise_spearman;
+  const sep = e.separability && e.separability.accuracy;
+  const csep = c && c.separability && c.separability.accuracy;
+  const t = (e.separability && e.separability.trend) || {};
+  const ct = (c && c.separability && c.separability.trend) || {};
+  const pair = (a, b, f) => f(a) + (b != null ? ` <span class="na">/ ${f(b)} isolated</span>` : "");
+  const trend = t.slope_pts_per_round == null ? "&mdash;"
+    : `${t.slope_pts_per_round > 0 ? "+" : ""}${t.slope_pts_per_round} pts (p ${t.slope_p})`
+      + (ct.slope_pts_per_round != null
+          ? ` <span class="na">/ ${ct.slope_pts_per_round > 0 ? "+" : ""}${ct.slope_pts_per_round} (p ${ct.slope_p}) isolated</span>` : "");
+  // A run with eight critiques cannot support these statistics; say so rather
+  // than printing a number that looks like the 288-critique one beside it.
+  const n = (e.separability && e.separability.n) || 0;
+  const thin = n < 40 ? ' <span class="na">too few</span>' : "";
+  const chance = e.separability && e.separability.chance != null
+    ? ` <span class="na">vs ${pct(e.separability.chance)}</span>` : "";
+  rows += `<tr><td>${esc(e.label)}</td>
+    <td class="n">${n || "&mdash;"}${thin}</td>
+    <td class="n">${pair(rel, crel, v => num(v))}</td>
+    <td class="n">${pair(sep, csep, v => pct(v))}${chance}</td>
+    <td class="n">${trend}</td></tr>`;
+}
+document.getElementById("measurements").innerHTML = rows + "</tbody>";
+
+document.getElementById("rules").innerHTML = EVALS.length
+  ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>
+      `<div><code>${k}</code> &mdash; pass at ${v.pass}, warn at ${v.warn}</div>`).join("")
+  : "";
+</script>
+</body>
+</html>
+"""
+
+
 def render(runs: list[dict], fig_prefix: str) -> str:
     """The page, with the run data and the figure prefix substituted in."""
     return (PAGE.replace("__RUNS_JSON__", json.dumps(runs))
                 .replace("__FIG_PREFIX__", fig_prefix))
+
+
+def eval_rows(runs: list[dict]) -> list[dict]:
+    """One row per evaluated run, newest first, with its control folded in.
+
+    The control's eval travels inside the row rather than as a row of its own:
+    on this page the comparison IS the measurement, and a control listed
+    separately would read as another experiment.
+    """
+    from eval_agents import THRESHOLDS
+    rows = []
+    for run in runs:
+        ev = run.get("behaviour")
+        if not ev:
+            continue
+        rows.append({
+            "run_id": run["id"],
+            "label": f"{run['name']} {run['clock']}",
+            "criteria": ev.get("criteria", []),
+            "reliability": ev.get("reliability"),
+            "separability": ev.get("separability"),
+            "coherence": ev.get("coherence"),
+            "control": (run.get("comparison") or {}).get("control_behaviour"),
+            "thresholds": THRESHOLDS,
+        })
+    return rows
 
 
 def referenced_figures(runs: list[dict]) -> set[str]:
@@ -614,6 +872,10 @@ def publish(runs: list[dict]) -> Path:
     (DOCS_DIR / "figures").mkdir(exist_ok=True)
     # Figures sit beside the page here, not a level up as they do from site/.
     (DOCS_DIR / "index.html").write_text(render(runs, "figures/"))
+    evals = eval_rows(runs)
+    if evals:
+        (DOCS_DIR / "evals.html").write_text(
+            EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals)))
 
     wanted = referenced_figures(runs)
     for name in sorted(wanted):
@@ -645,6 +907,12 @@ def main() -> None:
     out = SITE_DIR / "index.html"
     out.write_text(render(runs, "../figures/"))
     print(f"Wrote {out} ({len(runs)} runs). Open it in a browser.")
+
+    evals = eval_rows(runs)
+    if evals:
+        ev_out = SITE_DIR / "evals.html"
+        ev_out.write_text(EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals)))
+        print(f"Wrote {ev_out} ({len(evals)} evaluated runs).")
 
     if args.publish:
         publish(runs)

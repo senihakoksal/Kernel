@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observation Kernel — evals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --wall: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #7c7b76;
+    --rule: #e6e5e1; --accent: #2a78d6;
+    /* Status colours are reserved for verdicts and used nowhere else. Checked
+       against this surface: green 4.95:1, amber 4.74:1, red 5.22:1 — all AA for
+       text. Every cell also prints its measured value, so the colour is a second
+       signal rather than the only one. */
+    --pass: #1a7f37; --warn: #9a6700; --fail: #cf222e;
+    --pass-bg: #eaf4ec; --warn-bg: #faf2e3; --fail-bg: #fdecec;
+    --text: "Inter", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--wall); }
+  body { margin: 0; background: var(--wall); color: var(--ink); font-family: var(--text);
+         font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .col { max-width: 43rem; margin: 0 auto; padding: 0 1.75rem; }
+  .wide { max-width: 82rem; margin: 0 auto; padding: 0 1.75rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 5.5rem 0 0; }
+  .kernel { font-family: var(--mono); font-size: .7rem; color: var(--ink-3); }
+  h1 { font-weight: 300; font-size: 2.4rem; letter-spacing: -.025em; line-height: 1.1;
+       margin: .9rem 0 .6rem; }
+  .intro { max-width: 36rem; margin: 0 0 3rem; }
+  .intro p { font-size: .97rem; line-height: 1.72; color: var(--ink-2); margin: 0 0 1.1rem; }
+  .intro p:first-child { font-size: 1.12rem; color: var(--ink); font-weight: 300; }
+  h2 { font-weight: 400; font-size: 1.25rem; letter-spacing: -.015em;
+       margin: 4rem 0 .5rem; }
+  .note { color: var(--ink-3); font-size: .88rem; max-width: 40rem; margin: 0 0 1.5rem; }
+
+  /* The matrix: runs down, criteria across. Reading a column tells you whether a
+     prompt change moved that check. */
+  .matrix { border-collapse: collapse; font-size: .8rem; width: 100%; }
+  .matrix th, .matrix td { border-bottom: 1px solid var(--rule); padding: .5rem .5rem;
+                           text-align: center; vertical-align: middle; }
+  .matrix th { font-weight: 400; font-size: .68rem; color: var(--ink-3);
+               vertical-align: bottom; line-height: 1.25; padding-bottom: .7rem; }
+  .matrix th.run, .matrix td.run { text-align: left; white-space: nowrap;
+                                   font-family: var(--mono); font-size: .76rem; }
+  .matrix td.run a { color: var(--ink); }
+  .matrix td.v { font-family: var(--mono); font-size: .74rem;
+                 font-variant-numeric: tabular-nums; }
+  .pass { color: var(--pass); background: var(--pass-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .fail { color: var(--fail); background: #fdecec; font-weight: 500; }
+  .na   { color: var(--ink-3); }
+  .legend { display: flex; gap: 1.4rem; font-size: .76rem; color: var(--ink-3);
+            margin: 1rem 0 0; flex-wrap: wrap; }
+  .legend b { font-weight: 400; padding: .1rem .4rem; font-family: var(--mono);
+              font-size: .72rem; }
+
+  /* Measurements: no verdict, because convergence is the subject of study. */
+  .meas { border-collapse: collapse; font-size: .85rem; width: 100%; margin-top: 1rem; }
+  .meas th, .meas td { border-bottom: 1px solid var(--rule); padding: .55rem .9rem .55rem 0;
+                       text-align: left; }
+  .meas th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
+  .meas td.n { font-family: var(--mono); font-size: .78rem;
+               font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rules { font-size: .82rem; color: var(--ink-3); }
+  .rules code { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
+  footer { margin: 6rem 0 5rem; font-size: .85rem; color: var(--ink-3); }
+</style>
+</head>
+<body>
+
+<header class="col">
+  <div class="kernel"><a href="index.html">Observation Kernel</a></div>
+  <h1>Evals</h1>
+  <div class="intro">
+    <p>Did the agents do what their prompts asked? These checks are about the
+    instrument, not the result &mdash; they are run against every log and they have
+    right answers.</p>
+    <p>Change a prompt, run again, and read down a column: a green that turns red is
+    a change you caused. Nothing here uses a model to judge, so it costs nothing to
+    re-run as often as you like.</p>
+    <p>Convergence is deliberately absent from the pass/fail criteria. Critics growing
+    alike is the thing the project studies, so a red light on it would be a category
+    error. Those appear further down as measurements, with no verdict.</p>
+  </div>
+</header>
+
+<div class="wide">
+  <h2>Criteria</h2>
+  <p class="note">One row per run, newest first. Each cell shows the measured value;
+  the colour is a second signal, never the only one. Hover a cell for the rule it was
+  judged against.</p>
+  <div style="overflow-x:auto"><table class="matrix" id="matrix"></table></div>
+  <div class="legend">
+    <span><b class="pass">pass</b> meets the threshold</span>
+    <span><b class="warn">warn</b> below it but not badly</span>
+    <span><b class="fail">fail</b> the prompt is not being followed</span>
+    <span><b class="na">&mdash;</b> not applicable to this run</span>
+  </div>
+</div>
+
+<div class="col">
+  <h2>Measurements</h2>
+  <p class="note">No pass or fail. These are what the run found, and where a control
+  exists the isolated arm is given beside it &mdash; what survives isolation is shared
+  instinct rather than influence. Runs with only a handful of critiques are marked:
+  these statistics need a sample, and the early June runs do not have one.</p>
+  <table class="meas" id="measurements"></table>
+
+  <h2>Thresholds</h2>
+  <p class="note">Conventions, not laws. Stated here so they can be argued with rather
+  than discovered by reading the source.</p>
+  <div class="rules" id="rules"></div>
+
+  <footer>
+    <a href="index.html">&larr; studio archive</a> &nbsp;&middot;&nbsp;
+    <a href="https://github.com/senihakoksal/Kernel" target="_blank" rel="noopener">github.com/senihakoksal/Kernel</a>
+  </footer>
+</div>
+
+<script>
+const EVALS = [{"run_id": "run_20260910_154044", "label": "10 September 2026 15:40", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 1.0, "detail": "48/48", "rule": ">= 80% within the band", "verdict": "pass"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "48/48", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "48/48", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 0.9791666666666666, "detail": "47/48", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.17708333333333334, "detail": "51/288", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 0.96875, "detail": "279/288", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "288/288", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "288/288", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 0.9618055555555556, "detail": "96% (chance 17%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "42/42", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.1004, "detail": "lowest spread 0.100 (lena_voss)", "rule": "every critic's score sd >= 0.05", "verdict": "pass"}], "reliability": {"n_critics": 6, "n_works": 48, "mean_pairwise_spearman": 0.734, "pairwise_range": [0.679, 0.836], "between_work_variance": 0.01188, "null_mean": 0.00344, "p_value": 0.0}, "separability": {"n": 288, "n_critics": 6, "accuracy": 0.444, "chance": 0.167, "per_round": {"0": 0.444, "1": 0.556, "2": 0.556, "3": 0.472, "4": 0.444, "5": 0.444, "6": 0.333, "7": 0.306}, "trend": {"slope_pts_per_round": -2.91, "slope_p": 0.0201, "spearman": -0.749, "spearman_p": 0.0325}}, "coherence": {"n": 288, "spearman": 0.082, "p_value": 0.16515, "per_critic": {"clara_bennett": 0.047, "evelyn_hart": 0.235, "ines_marchetti": 0.148, "julian_moreau": 0.199, "lena_voss": 0.178, "marcus_ivey": -0.197}}, "control": {"run_id": "control_run_20260910_154044_20260910_160642", "conformance": {"band": [80, 180], "agents": {"leo_nakamura": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 8, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "maya_ortega": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 8, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "noah_park": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 8, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "zara_ellis": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 7, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "theo_malik": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 8, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "pablo_reyes": {"role": "artist", "n": 8, "in_band": 8, "title_ok": 8, "titled": 8, "reason_ok": 8, "score_ok": 0, "scored": 0, "field_ok": 8}, "clara_bennett": {"role": "critic", "n": 48, "in_band": 14, "title_ok": 0, "titled": 0, "reason_ok": 47, "score_ok": 48, "scored": 48, "field_ok": 48}, "marcus_ivey": {"role": "critic", "n": 48, "in_band": 14, "title_ok": 0, "titled": 0, "reason_ok": 48, "score_ok": 48, "scored": 48, "field_ok": 48}, "lena_voss": {"role": "critic", "n": 48, "in_band": 10, "title_ok": 0, "titled": 0, "reason_ok": 48, "score_ok": 48, "scored": 48, "field_ok": 48}, "evelyn_hart": {"role": "critic", "n": 48, "in_band": 11, "title_ok": 0, "titled": 0, "reason_ok": 46, "score_ok": 48, "scored": 48, "field_ok": 48}, "julian_moreau": {"role": "critic", "n": 48, "in_band": 16, "title_ok": 0, "titled": 0, "reason_ok": 48, "score_ok": 48, "scored": 48, "field_ok": 48}, "ines_marchetti": {"role": "critic", "n": 48, "in_band": 7, "title_ok": 0, "titled": 0, "reason_ok": 48, "score_ok": 48, "scored": 48, "field_ok": 48}}}, "on_target": {"per_round": {"0": {"n": 36, "top1": 0.9444444444444444, "mean_rank": 1.1666666666666667, "of": 6}, "1": {"n": 36, "top1": 0.9166666666666666, "mean_rank": 1.1111111111111112, "of": 6}, "2": {"n": 36, "top1": 1.0, "mean_rank": 1.0, "of": 6}, "3": {"n": 36, "top1": 1.0, "mean_rank": 1.0, "of": 6}, "4": {"n": 36, "top1": 0.9722222222222222, "mean_rank": 1.0277777777777777, "of": 6}, "5": {"n": 36, "top1": 0.9722222222222222, "mean_rank": 1.0277777777777777, "of": 6}, "6": {"n": 36, "top1": 0.9444444444444444, "mean_rank": 1.0555555555555556, "of": 6}, "7": {"n": 36, "top1": 1.0, "mean_rank": 1.0, "of": 6}}, "top1": 0.96875, "mean_rank": 1.0486111111111112, "chance_top1": 0.16666666666666666}, "novelty": {"n": 42, "near_duplicates": [], "max_similarity": 0.705, "mean_closest": 0.507}, "reliability": {"n_critics": 6, "n_works": 48, "mean_pairwise_spearman": 0.628, "pairwise_range": [0.403, 0.853], "between_work_variance": 0.01299, "null_mean": 0.00403, "p_value": 0.0}, "coherence": {"n": 288, "spearman": 0.132, "p_value": 0.02471, "per_critic": {"clara_bennett": 0.111, "evelyn_hart": 0.222, "ines_marchetti": 0.095, "julian_moreau": 0.369, "lena_voss": 0.236, "marcus_ivey": 0.087}}, "separability": {"n": 288, "n_critics": 6, "accuracy": 0.51, "chance": 0.167, "per_round": {"0": 0.389, "1": 0.583, "2": 0.528, "3": 0.667, "4": 0.556, "5": 0.444, "6": 0.389, "7": 0.528}, "trend": {"slope_pts_per_round": -0.43, "slope_p": 0.7994, "spearman": -0.157, "spearman_p": 0.7111}}, "discrimination": {"min_sd": 0.1008, "min_critic": "lena_voss", "per_critic": {"clara_bennett": 0.136, "evelyn_hart": 0.1577, "ines_marchetti": 0.1164, "julian_moreau": 0.1659, "lena_voss": 0.1008, "marcus_ivey": 0.1303}}, "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 1.0, "detail": "48/48", "rule": ">= 80% within the band", "verdict": "pass"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "48/48", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "48/48", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 0.9791666666666666, "detail": "47/48", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.25, "detail": "72/288", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 0.9895833333333334, "detail": "285/288", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "288/288", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "288/288", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 0.96875, "detail": "97% (chance 17%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "42/42", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.1008, "detail": "lowest spread 0.101 (lena_voss)", "rule": "every critic's score sd >= 0.05", "verdict": "pass"}]}, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_172539", "label": "11 June 2026 17:25", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.8, "detail": "8/10", "rule": ">= 80% within the band", "verdict": "pass"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "10/10", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "10/10", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "10/10", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.12, "detail": "6/50", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 0.98, "detail": "49/50", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "50/50", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "50/50", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 0.96, "detail": "96% (chance 50%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "8/8", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.0809, "detail": "lowest spread 0.081 (clara_bennett)", "rule": "every critic's score sd >= 0.05", "verdict": "pass"}], "reliability": {"n_critics": 5, "n_works": 10, "mean_pairwise_spearman": 0.481, "pairwise_range": [0.006, 0.802], "between_work_variance": 0.00839, "null_mean": 0.00503, "p_value": 0.0}, "separability": {"n": 50, "n_critics": 5, "accuracy": 0.04, "chance": 0.2, "per_round": {"0": 0.1, "1": 0.1, "2": 0.0, "3": 0.0, "4": 0.0}, "trend": {"slope_pts_per_round": -3.0, "slope_p": 0.0577, "spearman": -0.866, "spearman_p": 0.0577}}, "coherence": {"n": 50, "spearman": -0.042, "p_value": 0.77248, "per_critic": {"clara_bennett": -0.328, "evelyn_hart": 0.024, "julian_moreau": 0.261, "lena_voss": -0.043, "marcus_ivey": -0.219}}, "control": {"run_id": "control_run_20260611_172539_20260630_180409", "conformance": {"band": [80, 180], "agents": {"zara_ellis": {"role": "artist", "n": 5, "in_band": 4, "title_ok": 5, "titled": 5, "reason_ok": 5, "score_ok": 0, "scored": 0, "field_ok": 5}, "theo_malik": {"role": "artist", "n": 5, "in_band": 4, "title_ok": 5, "titled": 5, "reason_ok": 5, "score_ok": 0, "scored": 0, "field_ok": 5}, "clara_bennett": {"role": "critic", "n": 10, "in_band": 1, "title_ok": 0, "titled": 0, "reason_ok": 10, "score_ok": 10, "scored": 10, "field_ok": 10}, "marcus_ivey": {"role": "critic", "n": 10, "in_band": 0, "title_ok": 0, "titled": 0, "reason_ok": 10, "score_ok": 10, "scored": 10, "field_ok": 10}, "lena_voss": {"role": "critic", "n": 10, "in_band": 0, "title_ok": 0, "titled": 0, "reason_ok": 10, "score_ok": 10, "scored": 10, "field_ok": 10}, "evelyn_hart": {"role": "critic", "n": 10, "in_band": 1, "title_ok": 0, "titled": 0, "reason_ok": 10, "score_ok": 10, "scored": 10, "field_ok": 10}, "julian_moreau": {"role": "critic", "n": 10, "in_band": 1, "title_ok": 0, "titled": 0, "reason_ok": 10, "score_ok": 10, "scored": 10, "field_ok": 10}}}, "on_target": {"per_round": {"0": {"n": 10, "top1": 1.0, "mean_rank": 1.0, "of": 2}, "1": {"n": 10, "top1": 1.0, "mean_rank": 1.0, "of": 2}, "2": {"n": 10, "top1": 0.9, "mean_rank": 1.1, "of": 2}, "3": {"n": 10, "top1": 0.9, "mean_rank": 1.1, "of": 2}, "4": {"n": 10, "top1": 0.8, "mean_rank": 1.2, "of": 2}}, "top1": 0.92, "mean_rank": 1.08, "chance_top1": 0.5}, "novelty": {"n": 8, "near_duplicates": [], "max_similarity": 0.609, "mean_closest": 0.481}, "reliability": {"n_critics": 5, "n_works": 10, "mean_pairwise_spearman": 0.497, "pairwise_range": [0.183, 0.976], "between_work_variance": 0.00332, "null_mean": 0.00172, "p_value": 0.0055}, "coherence": {"n": 50, "spearman": -0.06, "p_value": 0.67847, "per_critic": {"clara_bennett": -0.03, "evelyn_hart": -0.212, "julian_moreau": -0.171, "lena_voss": 0.036, "marcus_ivey": -0.442}}, "separability": {"n": 50, "n_critics": 5, "accuracy": 0.08, "chance": 0.2, "per_round": {"0": 0.2, "1": 0.1, "2": 0.0, "3": 0.1, "4": 0.0}, "trend": {"slope_pts_per_round": -4.0, "slope_p": 0.1393, "spearman": -0.738, "spearman_p": 0.1546}}, "discrimination": {"min_sd": 0.0516, "min_critic": "lena_voss", "per_critic": {"clara_bennett": 0.0963, "evelyn_hart": 0.0673, "julian_moreau": 0.081, "lena_voss": 0.0516, "marcus_ivey": 0.0881}}, "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.8, "detail": "8/10", "rule": ">= 80% within the band", "verdict": "pass"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "10/10", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "10/10", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "10/10", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.06, "detail": "3/50", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "50/50", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "50/50", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "50/50", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 0.92, "detail": "92% (chance 50%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "8/8", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.0516, "detail": "lowest spread 0.052 (lena_voss)", "rule": "every critic's score sd >= 0.05", "verdict": "pass"}]}, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_170904", "label": "11 June 2026 17:09", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.4, "detail": "2/5", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "5/5", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "5/5", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "5/5", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.36, "detail": "9/25", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "25/25", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "25/25", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "25/25", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 1.0, "detail": "100% (chance 20%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.0473, "detail": "lowest spread 0.047 (lena_voss)", "rule": "every critic's score sd >= 0.05", "verdict": "warn"}], "reliability": {"n_critics": 5, "n_works": 5, "mean_pairwise_spearman": 0.027, "pairwise_range": [-0.821, 0.872], "between_work_variance": 0.00301, "null_mean": 0.00292, "p_value": 0.4065}, "separability": {"n": 25, "n_critics": 5, "accuracy": 0.04, "chance": 0.2, "per_round": {"0": 0.04}, "trend": {}}, "coherence": {"n": 25, "spearman": -0.338, "p_value": 0.09887, "per_critic": {"clara_bennett": 0.667, "evelyn_hart": 0.9, "julian_moreau": -0.447, "lena_voss": 0.564, "marcus_ivey": -0.6}}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_164503", "label": "11 June 2026 16:45", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.7142857142857143, "detail": "5/7", "rule": ">= 80% within the band", "verdict": "warn"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "7/7", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "7/7", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "7/7", "rule": ">= 95%", "verdict": "pass"}], "reliability": {}, "separability": {}, "coherence": {}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_163635", "label": "11 June 2026 16:36", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.2857142857142857, "detail": "4/14", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "14/14", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "14/14", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "14/14", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.04081632653061224, "detail": "2/49", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "49/49", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "49/49", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "49/49", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 0.8163265306122449, "detail": "82% (chance 14%)", "rule": ">= 90% nearest to the right work", "verdict": "warn"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "7/7", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.048, "detail": "lowest spread 0.048 (julian_moreau)", "rule": "every critic's score sd >= 0.05", "verdict": "warn"}], "reliability": {"n_critics": 7, "n_works": 7, "mean_pairwise_spearman": 0.183, "pairwise_range": [-0.667, 0.692], "between_work_variance": 0.00426, "null_mean": 0.00297, "p_value": 0.1875}, "separability": {"n": 49, "n_critics": 7, "accuracy": 0.041, "chance": 0.143, "per_round": {"0": 0.041}, "trend": {}}, "coherence": {"n": 49, "spearman": 0.166, "p_value": 0.25564, "per_critic": {"amina_hale": 0.382, "clara_bennett": 0.5, "david_rowe": -0.327, "evelyn_hart": 0.721, "julian_moreau": 0.889, "lena_voss": -0.108, "marcus_ivey": -0.185}}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_160852", "label": "11 June 2026 16:08", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 1.0, "detail": "4/4", "rule": ">= 80% within the band", "verdict": "pass"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "4/4", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "4/4", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "artists: title <= 6 words", "group": "contract", "value": 1.0, "detail": "4/4", "rule": ">= 95%", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.125, "detail": "1/8", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "8/8", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "8/8", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "8/8", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 1.0, "detail": "100% (chance 50%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "2/2", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.0426, "detail": "lowest spread 0.043 (julian_moreau)", "rule": "every critic's score sd >= 0.05", "verdict": "warn"}], "reliability": {"n_critics": 2, "n_works": 4, "mean_pairwise_spearman": 0.632, "pairwise_range": [0.632, 0.632], "between_work_variance": 0.00768, "null_mean": 0.00504, "p_value": 0.3405}, "separability": {"n": 8, "n_critics": 2, "accuracy": 0.0, "chance": 0.5, "per_round": {"0": 0.0, "1": 0.0}, "trend": {}}, "coherence": {"n": 8, "spearman": 0.732, "p_value": 0.039, "per_critic": {}}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_155236", "label": "11 June 2026 15:52", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.5, "detail": "2/4", "rule": ">= 80% within the band", "verdict": "warn"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "4/4", "rule": ">= 90%", "verdict": "pass"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "4/4", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.0, "detail": "0/8", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "8/8", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "8/8", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "8/8", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "critiques judge the assigned work", "group": "task", "value": 1.0, "detail": "100% (chance 50%)", "rule": ">= 90% nearest to the right work", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "2/2", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}, {"check": "every critic discriminates", "group": "scoring", "value": 0.0472, "detail": "lowest spread 0.047 (julian_moreau)", "rule": "every critic's score sd >= 0.05", "verdict": "warn"}], "reliability": {"n_critics": 2, "n_works": 4, "mean_pairwise_spearman": 0.949, "pairwise_range": [0.949, 0.949], "between_work_variance": 0.00483, "null_mean": 0.00477, "p_value": 0.544}, "separability": {"n": 8, "n_critics": 2, "accuracy": 0.0, "chance": 0.5, "per_round": {"0": 0.0, "1": 0.0}, "trend": {}}, "coherence": {"n": 8, "spearman": 0.683, "p_value": 0.06209, "per_critic": {}}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}, {"run_id": "run_20260611_132232", "label": "11 June 2026 13:22", "criteria": [{"check": "artists: content 80-180 words", "group": "contract", "value": 0.5, "detail": "2/4", "rule": ">= 80% within the band", "verdict": "warn"}, {"check": "artists: reasoning <= 2 sentences", "group": "contract", "value": 0.75, "detail": "3/4", "rule": ">= 90%", "verdict": "warn"}, {"check": "artists: role fields correct", "group": "contract", "value": 1.0, "detail": "4/4", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: content 80-180 words", "group": "contract", "value": 0.0, "detail": "0/4", "rule": ">= 80% within the band", "verdict": "fail"}, {"check": "critics: reasoning <= 2 sentences", "group": "contract", "value": 1.0, "detail": "4/4", "rule": ">= 90%", "verdict": "pass"}, {"check": "critics: role fields correct", "group": "contract", "value": 1.0, "detail": "4/4", "rule": "every record (artists omit score, critics omit title)", "verdict": "pass"}, {"check": "critics: score present and in range", "group": "contract", "value": 1.0, "detail": "4/4", "rule": "every critique, 0.0-1.0", "verdict": "pass"}, {"check": "artworks are not restatements", "group": "task", "value": 1.0, "detail": "2/2", "rule": "no work >= 0.85 similar to an earlier one", "verdict": "pass"}], "reliability": {}, "separability": {}, "coherence": {}, "control": null, "thresholds": {"length": {"pass": 0.8, "warn": 0.5}, "on_target": {"pass": 0.9, "warn": 0.75}, "reasoning": {"pass": 0.9, "warn": 0.75}, "fields": {"pass": 1.0, "warn": 0.99}, "title": {"pass": 0.95, "warn": 0.85}, "scores_valid": {"pass": 1.0, "warn": 0.99}, "novelty": {"pass": 1.0, "warn": 0.98}, "discrimination": {"pass": 0.05, "warn": 0.02}}}];
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : s;
+  return d.innerHTML;
+}
+
+/* Column order is the union across runs, kept stable so a column means the same
+   thing in every row even when a run skipped that check. */
+const columns = [];
+for (const e of EVALS)
+  for (const c of e.criteria)
+    if (!columns.includes(c.check)) columns.push(c.check);
+
+const shortName = c => c
+  .replace("artists: ", "A&nbsp;")
+  .replace("critics: ", "C&nbsp;")
+  .replace("content ", "")
+  .replace("reasoning <= 2 sentences", "reasoning <=2")
+  .replace("role fields correct", "role fields")
+  .replace("score present and in range", "score valid")
+  .replace("title <= 6 words", "title <=6")
+  .replace("critiques judge the assigned work", "on&nbsp;target")
+  .replace("artworks are not restatements", "new&nbsp;works")
+  .replace("every critic discriminates", "discriminates");
+
+let head = '<thead><tr><th class="run">run</th>'
+  + columns.map(c => `<th>${shortName(c)}</th>`).join("") + "</tr></thead>";
+let body = "<tbody>" + EVALS.map(e => {
+  const by = {};
+  for (const c of e.criteria) by[c.check] = c;
+  const cells = columns.map(col => {
+    const c = by[col];
+    if (!c) return '<td class="na">&mdash;</td>';
+    const shown = c.detail.length > 14 ? c.detail.split(" ")[0] : c.detail;
+    return `<td class="v ${c.verdict}" title="${esc(c.rule)} — measured ${esc(c.detail)}">`
+         + `${esc(shown)}</td>`;
+  }).join("");
+  return `<tr><td class="run"><a href="index.html">${esc(e.label)}</a></td>${cells}</tr>`;
+}).join("") + "</tbody>";
+document.getElementById("matrix").innerHTML = head + body;
+
+/* Measurements: stated in units, with the control beside the treatment. */
+const pct = v => v == null ? "&mdash;" : (v * 100).toFixed(0) + "%";
+const num = (v, d = 3) => v == null ? "&mdash;" : v.toFixed(d);
+let rows = `<thead><tr><th>run</th><th>critiques</th>
+  <th>critics agree<br>(rank correlation)</th>
+  <th>critics tellable apart<br>(vs chance)</th><th>change per round</th></tr></thead><tbody>`;
+for (const e of EVALS) {
+  const c = e.control;
+  const rel = e.reliability && e.reliability.mean_pairwise_spearman;
+  const crel = c && c.reliability && c.reliability.mean_pairwise_spearman;
+  const sep = e.separability && e.separability.accuracy;
+  const csep = c && c.separability && c.separability.accuracy;
+  const t = (e.separability && e.separability.trend) || {};
+  const ct = (c && c.separability && c.separability.trend) || {};
+  const pair = (a, b, f) => f(a) + (b != null ? ` <span class="na">/ ${f(b)} isolated</span>` : "");
+  const trend = t.slope_pts_per_round == null ? "&mdash;"
+    : `${t.slope_pts_per_round > 0 ? "+" : ""}${t.slope_pts_per_round} pts (p ${t.slope_p})`
+      + (ct.slope_pts_per_round != null
+          ? ` <span class="na">/ ${ct.slope_pts_per_round > 0 ? "+" : ""}${ct.slope_pts_per_round} (p ${ct.slope_p}) isolated</span>` : "");
+  // A run with eight critiques cannot support these statistics; say so rather
+  // than printing a number that looks like the 288-critique one beside it.
+  const n = (e.separability && e.separability.n) || 0;
+  const thin = n < 40 ? ' <span class="na">too few</span>' : "";
+  const chance = e.separability && e.separability.chance != null
+    ? ` <span class="na">vs ${pct(e.separability.chance)}</span>` : "";
+  rows += `<tr><td>${esc(e.label)}</td>
+    <td class="n">${n || "&mdash;"}${thin}</td>
+    <td class="n">${pair(rel, crel, v => num(v))}</td>
+    <td class="n">${pair(sep, csep, v => pct(v))}${chance}</td>
+    <td class="n">${trend}</td></tr>`;
+}
+document.getElementById("measurements").innerHTML = rows + "</tbody>";
+
+document.getElementById("rules").innerHTML = EVALS.length
+  ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>
+      `<div><code>${k}</code> &mdash; pass at ${v.pass}, warn at ${v.warn}</div>`).join("")
+  : "";
+</script>
+</body>
+</html>
