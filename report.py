@@ -667,6 +667,14 @@ EVAL_PAGE = """<!DOCTYPE html>
   .meas th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
   .meas td.n { font-family: var(--mono); font-size: .78rem;
                font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .gloss { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); max-width: 42rem; }
+  .gloss:last-child { border-bottom: 0; }
+  .gloss-h { display: flex; justify-content: space-between; align-items: baseline;
+             gap: 1.5rem; margin-bottom: .45rem; flex-wrap: wrap; }
+  .gloss-n { font-size: .95rem; color: var(--ink); }
+  .gloss-r { font-family: var(--mono); font-size: .72rem; color: var(--ink-3);
+             white-space: nowrap; }
+  .gloss p { margin: 0; font-size: .89rem; line-height: 1.65; color: var(--ink-2); }
   .rules { font-size: .82rem; color: var(--ink-3); }
   .rules code { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
   footer { margin: 6rem 0 5rem; font-size: .85rem; color: var(--ink-3); }
@@ -694,7 +702,9 @@ EVAL_PAGE = """<!DOCTYPE html>
   <h2>Criteria</h2>
   <p class="note">One row per run, newest first. Each cell shows the measured value;
   the colour is a second signal, never the only one. Hover a cell for the rule it was
-  judged against.</p>
+  judged against. Each run is judged against the length rule it was actually given,
+  recorded in its own sidecar &mdash; so editing the prompt will not retroactively
+  turn old rows red.</p>
   <div style="overflow-x:auto"><table class="matrix" id="matrix"></table></div>
   <div class="legend">
     <span><b class="pass">pass</b> meets the threshold</span>
@@ -702,6 +712,13 @@ EVAL_PAGE = """<!DOCTYPE html>
     <span><b class="fail">fail</b> the prompt is not being followed</span>
     <span><b class="na">&mdash;</b> not applicable to this run</span>
   </div>
+</div>
+
+<div class="col">
+  <h2>What each check means</h2>
+  <p class="note">Abbreviated in the matrix above; in full here. <b>A</b> is artists,
+  <b>C</b> is critics.</p>
+  <div id="glossary"></div>
 </div>
 
 <div class="col">
@@ -799,6 +816,20 @@ for (const e of EVALS) {
     <td class="n">${trend}</td></tr>`;
 }
 document.getElementById("measurements").innerHTML = rows + "</tbody>";
+
+/* Built from the checks that were actually run, not a hand-kept list beside
+   them — a glossary maintained separately drifts the moment a check changes. */
+const seen = new Set();
+const entries = [];
+for (const e of EVALS)
+  for (const c of e.criteria)
+    if (c.what && !seen.has(c.check)) { seen.add(c.check); entries.push(c); }
+document.getElementById("glossary").innerHTML = entries.map(c => `
+  <div class="gloss">
+    <div class="gloss-h"><span class="gloss-n">${esc(c.check)}</span>
+      <span class="gloss-r">${esc(c.rule)}</span></div>
+    <p>${esc(c.what)}</p>
+  </div>`).join("");
 
 document.getElementById("rules").innerHTML = EVALS.length
   ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>

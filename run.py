@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -33,8 +34,8 @@ import yaml
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 
-from agents import (FEED_WINDOW, MODEL, Agent, UsageTally, prewarm_cache,
-                    windowed_feed)
+from agents import (FEED_WINDOW, MODEL, SHARED_SYSTEM_PROMPT, Agent,
+                    UsageTally, prewarm_cache, windowed_feed)
 from schema import Record
 
 # Defaults — overridable on the command line. Never hardcoded inside the loop.
@@ -100,6 +101,27 @@ def agents_file_sha256(path: Path | None = None) -> str:
     return hashlib.sha256((path or AGENTS_FILE).read_bytes()).hexdigest()
 
 
+def system_prompt_sha256() -> str:
+    """Hash of the shared framing every agent was given.
+
+    The roster hash covers dispositions; this covers the prompt they all share.
+    Without it, a column on the eval page can change and the logs cannot say
+    whether the prompt or the roster moved it — and it cannot be backfilled
+    onto runs that already happened.
+    """
+    return hashlib.sha256(SHARED_SYSTEM_PROMPT.encode()).hexdigest()
+
+
+def content_word_band() -> list[int] | None:
+    """The length rule in force for this run, read off the prompt as it ships.
+
+    Recorded rather than re-read at evaluation time: changing the band later
+    would otherwise re-judge every past run against a rule it was never given.
+    """
+    m = re.search(r"between (\d+) and (\d+) words", SHARED_SYSTEM_PROMPT)
+    return [int(m.group(1)), int(m.group(2))] if m else None
+
+
 def write_run_meta(log_path: Path, **fields) -> Path:
     """Write the sidecar. Callers add whatever else identifies their arm."""
     meta = {
@@ -107,6 +129,8 @@ def write_run_meta(log_path: Path, **fields) -> Path:
         "model": MODEL,
         "agents_file": str(AGENTS_FILE),
         "agents_file_sha256": agents_file_sha256(),
+        "system_prompt_sha256": system_prompt_sha256(),
+        "content_word_band": content_word_band(),
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         **fields,
     }

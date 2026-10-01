@@ -52,14 +52,23 @@ NEG_ANCHOR = ("This work fails. It is weak, derivative and confused, "
               "it does not earn its effect, and I do not admire it.")
 
 
-def band_from_prompt() -> tuple[int, int]:
-    """The word band the system prompt actually asks for, read from the prompt.
+def band_for(path: Path) -> tuple[tuple[int, int], str]:
+    """The length rule THIS run was given, preferring its own sidecar.
 
-    Hard-coding it here would let the two drift apart silently, and then this
-    tool would be scoring agents against a rule nobody gave them.
+    Reading the live prompt would re-judge every past run against whatever the
+    band says today, so a prompt edit would silently turn old rows red for a
+    rule those agents never received. Runs written before the band was recorded
+    fall back to the current prompt, which is the best available guess and is
+    labelled as such on the page.
     """
+    meta_path = path.with_suffix(".meta.json")
+    if meta_path.exists():
+        band = json.loads(meta_path.read_text()).get("content_word_band")
+        if band:
+            return (int(band[0]), int(band[1])), "recorded with the run"
     m = re.search(r"between (\d+) and (\d+) words", SHARED_SYSTEM_PROMPT)
-    return (int(m.group(1)), int(m.group(2))) if m else (0, 10**6)
+    return ((int(m.group(1)), int(m.group(2))) if m else (0, 10**6),
+            "from the current prompt — this run predates the record")
 
 
 def load(path: Path) -> list[Record]:
@@ -68,14 +77,15 @@ def load(path: Path) -> list[Record]:
 
 
 # --- Tier 0: the stated contract, per agent ----------------------------------
-def conformance(records: list[Record]) -> dict:
+def conformance(records: list[Record], band: tuple[int, int],
+                band_source: str) -> dict:
     """Compliance with each rule the system prompt states, agent by agent.
 
     Reported per agent rather than per run because the interesting failures are
     not uniform: on run_20260910_154044 the artists hold the word band perfectly
     and the critics miss it four times out of five.
     """
-    lo, hi = band_from_prompt()
+    lo, hi = band
     rows = {}
     for rec in records:
         r = rows.setdefault(rec.agent, {"role": rec.role, "n": 0, "in_band": 0,
@@ -94,7 +104,7 @@ def conformance(records: list[Record]) -> dict:
             r["scored"] += rec.score is not None
             r["score_ok"] += rec.score is not None and 0.0 <= rec.score <= 1.0
             r["field_ok"] += rec.title is None           # critics omit title
-    return {"band": (lo, hi), "agents": rows}
+    return {"band": (lo, hi), "band_source": band_source, "agents": rows}
 
 
 # --- Tier 1: behaviour, measured with local embeddings -----------------------
@@ -320,6 +330,36 @@ THRESHOLDS = {
 }
 
 
+WHAT = {
+    "length": "The prompt asks for every artwork and critique to fall between {lo} "
+              "and {hi} words. This counts how many did. Failing it does not make a "
+              "run unusable — it means the length instruction is not landing, which "
+              "matters because output length is what the rate limit meters.",
+    "reasoning": "Alongside its contribution each agent returns a short rationale, "
+                 "and the prompt asks for one or two sentences. This counts how many "
+                 "stayed that short.",
+    "fields": "Artists must leave out the score, critics must leave out the title. A "
+              "record carrying the wrong field means the agent misread which role it "
+              "was playing.",
+    "title": "Artists are asked for a title of at most six words. This counts how "
+             "many obliged.",
+    "scores_valid": "Every critique has to carry a score between 0 and 1. A missing "
+                    "or out-of-range score breaks every measurement downstream of it.",
+    "on_target": "Each critic is handed one specific artwork to judge. This checks "
+                 "the critique is about that work: it compares the critique's wording "
+                 "against every artwork of that round, and counts it on target when "
+                 "the assigned one is the closest. If a critique is nearer some other "
+                 "work, the critic drifted off the task it was given.",
+    "novelty": "Artists are told to invent a NEW concept each round. This compares "
+               "every artwork against every earlier one and flags any that is close "
+               "enough to count as a restatement rather than a new work.",
+    "discrimination": "A critic that gives everything the same score is not "
+                      "evaluating, and one such critic is invisible in an average. "
+                      "This takes the least varying critic in the run and checks that "
+                      "its scores actually spread.",
+}
+
+
 def verdict(value, key, higher_is_better=True):
     """pass / warn / fail against a named threshold, or None when inapplicable."""
     if value is None:
@@ -354,25 +394,30 @@ def criteria_checks(result: dict) -> list[dict]:
         rows.append({"check": f"{role}s: content {lo}-{hi} words", "group": "contract",
                      "value": v["in_band"] / v["n"], "detail": f"{v['in_band']}/{v['n']}",
                      "rule": f">= {THRESHOLDS['length']['pass']:.0%} within the band",
+                     "what": WHAT["length"].format(lo=lo, hi=hi),
                      "verdict": verdict(v["in_band"] / v["n"], "length")})
         rows.append({"check": f"{role}s: reasoning <= 2 sentences", "group": "contract",
                      "value": v["reason_ok"] / v["n"], "detail": f"{v['reason_ok']}/{v['n']}",
                      "rule": f">= {THRESHOLDS['reasoning']['pass']:.0%}",
+                     "what": WHAT["reasoning"],
                      "verdict": verdict(v["reason_ok"] / v["n"], "reasoning")})
         rows.append({"check": f"{role}s: role fields correct", "group": "contract",
                      "value": v["field_ok"] / v["n"], "detail": f"{v['field_ok']}/{v['n']}",
                      "rule": "every record (artists omit score, critics omit title)",
+                     "what": WHAT["fields"],
                      "verdict": verdict(v["field_ok"] / v["n"], "fields")})
         if role == "artist" and v["titled"]:
             rows.append({"check": "artists: title <= 6 words", "group": "contract",
                          "value": v["title_ok"] / v["titled"],
                          "detail": f"{v['title_ok']}/{v['titled']}",
                          "rule": f">= {THRESHOLDS['title']['pass']:.0%}",
+                         "what": WHAT["title"],
                          "verdict": verdict(v["title_ok"] / v["titled"], "title")})
         if role == "critic" and v["scored"]:
             rows.append({"check": "critics: score present and in range", "group": "contract",
                          "value": v["score_ok"] / v["n"], "detail": f"{v['score_ok']}/{v['n']}",
                          "rule": "every critique, 0.0-1.0",
+                         "what": WHAT["scores_valid"],
                          "verdict": verdict(v["score_ok"] / v["n"], "scores_valid")})
 
     t = result["on_target"]
@@ -380,6 +425,7 @@ def criteria_checks(result: dict) -> list[dict]:
         rows.append({"check": "critiques judge the assigned work", "group": "task",
                      "value": t["top1"], "detail": f"{t['top1']:.0%} (chance {t['chance_top1']:.0%})",
                      "rule": f">= {THRESHOLDS['on_target']['pass']:.0%} nearest to the right work",
+                     "what": WHAT["on_target"],
                      "verdict": verdict(t["top1"], "on_target")})
 
     n = result["novelty"]
@@ -389,6 +435,7 @@ def criteria_checks(result: dict) -> list[dict]:
                      "value": share,
                      "detail": f"{n['n'] - len(n['near_duplicates'])}/{n['n']}",
                      "rule": f"no work >= {NOVELTY_LIMIT} similar to an earlier one",
+                     "what": WHAT["novelty"],
                      "verdict": verdict(share, "novelty")})
 
     sd = result.get("discrimination")
@@ -397,6 +444,7 @@ def criteria_checks(result: dict) -> list[dict]:
                      "value": sd["min_sd"],
                      "detail": f"lowest spread {sd['min_sd']:.3f} ({sd['min_critic']})",
                      "rule": f"every critic's score sd >= {THRESHOLDS['discrimination']['pass']}",
+                     "what": WHAT["discrimination"],
                      "verdict": verdict(sd["min_sd"], "discrimination")})
     return rows
 
@@ -497,7 +545,7 @@ def main() -> None:
 
     result = {
         "run_id": path.stem,
-        "conformance": conformance(records),
+        "conformance": conformance(records, *band_for(path)),
         "on_target": on_target(records, model),
         "novelty": novelty(records, model),
         "reliability": score_reliability(records),
