@@ -256,8 +256,9 @@ hit.
 - **[control.py](control.py)** — replays a run's artworks to isolated critics.
 - **[analyze.py](analyze.py)** — pulls descriptors out of the critiques (spaCy
   noun phrases carrying at least one adjective), subtracts prior vocabulary,
-  clusters what's left, looks for cross-critic adoption, draws the figure. Takes
-  both arms at once so they're clustered in one space.
+  clusters what's left with `all-MiniLM-L6-v2` sentence embeddings, looks for
+  cross-critic adoption, draws the figure. Takes both arms at once so they're
+  clustered in one space.
 - **[report.py](report.py)** — builds the published archive (`docs/index.html`,
   served by GitHub Pages): what got made, what got said about it. Stdlib only.
 - **[agents.py](agents.py)** — the `Agent` class, the shared system prompt, the
@@ -280,7 +281,9 @@ hit.
 The analysis asks what a run showed. The evals ask whether the instrument was
 behaving — whether the agents did what their prompts told them to. No model
 judge, no ground truth, no API calls, so re-running after a prompt change costs
-nothing. Published at
+nothing. Four of the checks need to compare meaning rather than count things,
+and use the same local `all-MiniLM-L6-v2` embeddings the clustering does —
+87 MB on disk, no network; the rest is arithmetic. Published at
 [evals.html](https://senihakoksal.github.io/Kernel/evals.html) as a matrix: runs
 down, criteria across, so changing a prompt and re-running means reading down a
 column for a cell that changed colour.
