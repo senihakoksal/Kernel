@@ -264,12 +264,49 @@ hit.
   feed formatter and its window, JSON parsing. `MODEL` lives here.
 - **[agents.yaml](agents.yaml)** — who's in the studio: name, role, disposition.
 - **[schema.py](schema.py)** — `Record` and `ModelOutput`.
+- **[check_run.py](check_run.py)** — is a log usable data? Completeness, score
+  degeneracy, duplicate text, provenance. Exits non-zero, so it can gate.
+- **[eval_agents.py](eval_agents.py)** — did the agents follow their prompts?
+  See below.
 - **[docs/threshold-sweep.md](docs/threshold-sweep.md)** — every number depends
   on `SIMILARITY_THRESHOLD`, so it got swept from 0.45 to 0.90 instead of
   assumed. Absolute overlap roughly triples across that range, but the early→late
   direction holds throughout. 0.72 is where the merges are clean synonyms
   (`final sentence · final paragraph · last sentence`) and nothing genuinely
   different has been merged yet.
+
+## Evals
+
+The analysis asks what a run showed. The evals ask whether the instrument was
+behaving — whether the agents did what their prompts told them to. No model
+judge, no ground truth, no API calls, so re-running after a prompt change costs
+nothing. Published at
+[evals.html](https://senihakoksal.github.io/Kernel/evals.html) as a matrix: runs
+down, criteria across, so changing a prompt and re-running means reading down a
+column for a cell that changed colour.
+
+Eleven criteria get a pass, warn or fail — the ones with a right answer. Format
+and role compliance; whether each critique judged the work it was actually given
+(96%, against 17% if matched at random); whether artworks are new rather than
+restatements; whether every critic discriminates rather than rubber-stamping.
+One has failed in every run so far: the critics ignore the 80–180 word limit
+while the artists keep to it perfectly, same instruction and same model.
+
+Three things are measured without a verdict, because critics growing alike is
+the subject of the study rather than a defect. Critics rank works alike at
+0.734 — but isolated critics who never see a peer still reach 0.628, so 86% of
+the agreement needs no contact at all. A critic can be identified from its prose
+44% of the time against 17% by chance, and that falls 2.91 points a round
+(p = 0.02) while the isolated arm stays flat (−0.43, p = 0.80): they converge in
+voice, not only in vocabulary. The third, whether a score matches the sentiment
+of its own critique, came back at 0.082 and is reported as inconclusive rather
+than dressed up.
+
+Thresholds are conventions and are printed on the page to be argued with. Each
+run records the hash of the system prompt it ran under, so a column changing
+colour is attributable to an edit rather than a guess — and each run is judged
+against the length rule it was actually given, so editing the prompt does not
+retroactively redden old rows.
 
 ## Setup
 
@@ -295,6 +332,10 @@ uv run python control.py logs/run_20260609_120000.jsonl
 
 # Both arms, clustered in one shared vocabulary space:
 uv run python analyze.py --treatment logs/run_A.jsonl --control logs/control_A.jsonl
+
+# Check the log is usable, then whether the agents followed their prompts.
+uv run python check_run.py
+uv run python eval_agents.py
 
 # Skip the automatic steps; re-analyze an old run; rebuild the archive:
 uv run python run.py --rounds 4 --no-analyze
