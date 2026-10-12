@@ -702,6 +702,15 @@ EVAL_PAGE = """<!DOCTYPE html>
                    text-align: left; padding-bottom: .3rem; font-weight: 400;
                    border-bottom: 1px solid var(--rule); }
   .matrix th.boundary, .matrix td.boundary { border-left: 1px solid var(--ink-3); }
+  .gloss-wrap { margin: 4rem 0 0 2.5rem; }
+  .gloss-wrap > summary { cursor: pointer; list-style: none; font-size: 1.25rem;
+                          font-weight: 400; letter-spacing: -.015em; padding: .2rem 0;
+                          color: var(--ink); }
+  .gloss-wrap > summary::-webkit-details-marker { display: none; }
+  .gloss-wrap > summary::before { content: "+ "; color: var(--ink-3); }
+  .gloss-wrap[open] > summary::before { content: "− "; color: var(--ink-3); }
+  .gloss-wrap > summary:hover { color: var(--accent); }
+  .gloss-wrap > .note { margin-top: .6rem; }
   .gloss-g { font-size: 1rem; font-weight: 500; margin: 2.5rem 0 .3rem; }
   .gloss-g:first-child { margin-top: 1rem; }
   .gloss { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); }
@@ -757,10 +766,12 @@ EVAL_PAGE = """<!DOCTYPE html>
 </div>
 
 <div class="wide">
-  <h2>What each check means</h2>
-  <p class="note">Abbreviated in the matrix above; in full here. <b>A</b> is artists,
-  <b>C</b> is critics.</p>
-  <div id="glossary"></div>
+  <details class="gloss-wrap">
+    <summary>What each check means</summary>
+    <p class="note">Abbreviated in the matrix above; in full here. <b>A</b> is artists,
+    <b>C</b> is critics.</p>
+    <div id="glossary"></div>
+  </details>
 </div>
 
 <div class="wide">
