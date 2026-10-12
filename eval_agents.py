@@ -404,6 +404,7 @@ def criteria_checks(result: dict) -> list[dict]:
                      "value": t["top1"], "detail": f"{t['top1']:.0%} (chance {t['chance_top1']:.0%})",
                      "cell": f"{t['top1']:.0%}",
                      "rule": f">= {THRESHOLDS['on_target']['pass']:.0%} nearest to the right work",
+                     "key": "on_target",
                      "what": WHAT["on_target"],
                      "verdict": verdict(t["top1"], "on_target")})
 
@@ -415,6 +416,7 @@ def criteria_checks(result: dict) -> list[dict]:
                      "detail": f"{n['n'] - len(n['near_duplicates'])}/{n['n']}",
                      "cell": f"{n['n'] - len(n['near_duplicates'])}/{n['n']}",
                      "rule": f"no work >= {NOVELTY_LIMIT} similar to an earlier one",
+                     "key": "novelty",
                      "what": WHAT["novelty"],
                      "verdict": verdict(share, "novelty")})
 
@@ -436,6 +438,7 @@ def criteria_checks(result: dict) -> list[dict]:
                      "rule": (f"every critic's score sd >= {floor}" if decisive else
                               f"sd >= {floor}, but +/- {se:.3f} on n="
                               f"{sd.get('min_n', '?')} straddles it — no verdict"),
+                     "key": "discrimination",
                      "what": WHAT["discrimination"],
                      "verdict": (verdict(sd["min_sd"], "discrimination") if decisive
                                  else "insufficient")})
@@ -446,18 +449,21 @@ def criteria_checks(result: dict) -> list[dict]:
                      "value": v["in_band"] / v["n"], "detail": f"{v['in_band']}/{v['n']}",
                      "cell": f"{v['in_band']}/{v['n']}",
                      "rule": f">= {THRESHOLDS['length']['pass']:.0%} within the band",
+                     "key": "length",
                      "what": WHAT["length"].format(lo=lo, hi=hi),
                      "verdict": verdict(v["in_band"] / v["n"], "length")})
         contract.append({"check": f"{role}s: reasoning <= 2 sentences", "group": "contract",
                      "value": v["reason_ok"] / v["n"], "detail": f"{v['reason_ok']}/{v['n']}",
                      "cell": f"{v['reason_ok']}/{v['n']}",
                      "rule": f">= {THRESHOLDS['reasoning']['pass']:.0%}",
+                     "key": "reasoning",
                      "what": WHAT["reasoning"],
                      "verdict": verdict(v["reason_ok"] / v["n"], "reasoning")})
         contract.append({"check": f"{role}s: role fields correct", "group": "contract",
                      "value": v["field_ok"] / v["n"], "detail": f"{v['field_ok']}/{v['n']}",
                      "cell": f"{v['field_ok']}/{v['n']}",
                      "rule": "every record (artists omit score, critics omit title)",
+                     "key": "fields",
                      "what": WHAT["fields"],
                      "verdict": verdict(v["field_ok"] / v["n"], "fields")})
         if role == "artist" and v["titled"]:
@@ -466,14 +472,16 @@ def criteria_checks(result: dict) -> list[dict]:
                          "detail": f"{v['title_ok']}/{v['titled']}",
                          "cell": f"{v['title_ok']}/{v['titled']}",
                          "rule": f">= {THRESHOLDS['title']['pass']:.0%}",
-                         "what": WHAT["title"],
+                         "key": "title",
+                     "what": WHAT["title"],
                          "verdict": verdict(v["title_ok"] / v["titled"], "title")})
         if role == "critic" and v["scored"]:
             contract.append({"check": "critics: score present and in range", "group": "contract",
                          "value": v["score_ok"] / v["n"], "detail": f"{v['score_ok']}/{v['n']}",
                          "cell": f"{v['score_ok']}/{v['n']}",
                          "rule": "every critique, 0.0-1.0",
-                         "what": WHAT["scores_valid"],
+                         "key": "scores_valid",
+                     "what": WHAT["scores_valid"],
                          "verdict": verdict(v["score_ok"] / v["n"], "scores_valid")})
 
     return rows + contract

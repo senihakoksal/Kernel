@@ -778,6 +778,15 @@ EVAL_PAGE = """<!DOCTYPE html>
     <b>C</b> is critics.</p>
     <div id="glossary"></div>
   </details>
+
+  <details class="gloss-wrap">
+    <summary>Thresholds</summary>
+    <p class="note">Where each criterion's pass and warn lines sit. Conventions, not
+    laws &mdash; stated here so they can be argued with rather than discovered by
+    reading the source. The measurements below have none by design: there is no
+    threshold at which critics agreeing is correct or incorrect.</p>
+    <div class="rules" id="rules"></div>
+  </details>
 </div>
 
 <div class="wide">
@@ -793,11 +802,6 @@ EVAL_PAGE = """<!DOCTYPE html>
     <p class="note">None of these has a pass or fail. They are what the run found.</p>
     <div id="meas-gloss"></div>
   </details>
-
-  <h2>Thresholds</h2>
-  <p class="note">Conventions, not laws. Stated here so they can be argued with rather
-  than discovered by reading the source.</p>
-  <div class="rules" id="rules"></div>
 
   <footer>
     <a href="index.html">&larr; studio archive</a> &nbsp;&middot;&nbsp;
@@ -994,9 +998,27 @@ document.getElementById("meas-gloss").innerHTML = MEAS.map(m => `
     Settling it needs a judge, which costs money and is not built.</p>
   </div>` : "");
 
+/* Labelled by the checks each line governs, in the order those checks appear
+   above, rather than by the internal key — the key means nothing to a reader
+   sitting next to a plain-language explanation. Built from the rows, so a
+   renamed check renames itself here. A threshold with no row on the page (a
+   check that did not run) is dropped rather than shown against nothing. */
+const governs = new Map();
+for (const e of EVALS)
+  for (const c of e.criteria)
+    if (c.key) {
+      if (!governs.has(c.key)) governs.set(c.key, []);
+      const names = governs.get(c.key);
+      if (!names.includes(c.check)) names.push(c.check);
+    }
 document.getElementById("rules").innerHTML = EVALS.length
-  ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>
-      `<div><code>${k}</code> &mdash; pass at ${v.pass}, warn at ${v.warn}</div>`).join("")
+  ? [...governs].map(([k, names]) => {
+      const t = (EVALS[0].thresholds || {})[k];
+      if (!t) return "";
+      const fmt = v => k === "discrimination" ? v : pct(v);
+      return `<div>${esc(names.join(", "))} &mdash; pass at ${fmt(t.pass)},`
+           + ` warn at ${fmt(t.warn)}</div>`;
+    }).join("")
   : "";
 </script>
 </body>
