@@ -806,9 +806,12 @@ let body = "<tbody>" + EVALS.map(e => {
   const cells = columns.map(col => {
     const c = by[col];
     if (!c) return `<td class="na ${firstOfGroup.has(col) ? "boundary" : ""}">&mdash;</td>`;
-    const shown = c.detail.length > 14 ? c.detail.split(" ")[0] : c.detail;
+    // The compact value comes from the check itself. Truncating the prose
+    // detail used to take its first word, so every discrimination cell read
+    // "lowest" and the number the check is about never appeared.
     return `<td class="v ${c.verdict} ${firstOfGroup.has(col) ? "boundary" : ""}"`
-         + ` title="${esc(c.rule)} — measured ${esc(c.detail)}">${esc(shown)}</td>`;
+         + ` title="${esc(c.rule)} — measured ${esc(c.detail)}">`
+         + `${esc(c.cell || c.detail)}</td>`;
   }).join("");
   return `<tr><td class="run"><a href="index.html">${esc(e.label)}</a></td>${cells}</tr>`;
 }).join("") + "</tbody>";
