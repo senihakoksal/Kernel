@@ -73,6 +73,14 @@
   .run-name { font-size: 1.02rem; font-weight: 400; transition: color .12s ease; }
   .run-name .clock { color: var(--ink-3); font-family: var(--mono); font-size: .8rem;
                      margin-left: .6rem; }
+  .test-runs { margin-top: 2rem; }
+  .test-runs > summary { cursor: pointer; font-size: .85rem; color: var(--ink-3);
+                         list-style: none; padding: .8rem 0; }
+  .test-runs > summary::-webkit-details-marker { display: none; }
+  .test-runs > summary::before { content: "+ "; }
+  .test-runs[open] > summary::before { content: "− "; }
+  .test-runs > summary:hover { color: var(--accent); }
+  .test-runs .runs { border-top: 1px solid var(--rule); }
   .run-titles { grid-column: 1 / -1; color: var(--ink-3); font-size: .85rem;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .run-n { text-align: right; font-family: var(--mono); font-size: .88rem;
@@ -212,6 +220,10 @@
     <div class="runs-head runs-cols"><div>run</div><div>works</div>
       <div>critiques</div><div>rounds</div></div>
     <div class="runs" id="run-list"></div>
+    <details id="test-wrap" class="test-runs" hidden>
+      <summary id="test-summary"></summary>
+      <div class="runs" id="test-run-list"></div>
+    </details>
   </div>
 </div>
 
@@ -468,7 +480,12 @@ function showRun(i) {
   window.scrollTo(0, 0);
 }
 
+/* Paired runs first; the rest are short test runs and sit behind a disclosure
+   so they do not crowd out the two that carry a control. The original index is
+   kept so showRun() still addresses the right run either way. */
 const list = document.getElementById("run-list");
+const testList = document.getElementById("test-run-list");
+let nTest = 0;
 RUNS.forEach((run, i) => {
   const c = counts(run);
   const titles = run.records.filter(r => r.kind === "concept" && r.title)
@@ -482,8 +499,18 @@ RUNS.forEach((run, i) => {
     <div class="run-n">${c.rounds}</div>
     <div class="run-titles">${titles ? esc(titles) : "&mdash;"}</div>`;
   el.onclick = () => showRun(i);
-  list.appendChild(el);
+  if (run.comparison) {
+    list.appendChild(el);
+  } else {
+    testList.appendChild(el);
+    nTest++;
+  }
 });
+if (nTest) {
+  document.getElementById("test-wrap").hidden = false;
+  document.getElementById("test-summary").textContent =
+    `${nTest} shorter test run${nTest === 1 ? "" : "s"}, without a control arm`;
+}
 </script>
 </body>
 </html>
