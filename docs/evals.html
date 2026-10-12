@@ -24,20 +24,23 @@
   html { background: var(--wall); }
   body { margin: 0; background: var(--wall); color: var(--ink); font-family: var(--text);
          font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
-  .col { max-width: 43rem; margin: 0 auto; padding: 0 1.75rem; }
   .wide { max-width: 82rem; margin: 0 auto; padding: 0 1.75rem; }
+  /* Reading measures sit on the content, not on a narrower centred
+     wrapper — otherwise each section starts at a different left edge. */
+  .intro, .note, .gloss, .rules, footer { max-width: 42rem; }
+  .meas { max-width: 58rem; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   header { padding: 5.5rem 0 0; }
   .kernel { font-family: var(--mono); font-size: .7rem; color: var(--ink-3); }
   h1 { font-weight: 300; font-size: 2.4rem; letter-spacing: -.025em; line-height: 1.1;
        margin: .9rem 0 .6rem; }
-  .intro { max-width: 36rem; margin: 0 0 3rem; }
+  .intro { margin: 0 0 3rem; }
   .intro p { font-size: .97rem; line-height: 1.72; color: var(--ink-2); margin: 0 0 1.1rem; }
   .intro p:first-child { font-size: 1.12rem; color: var(--ink); font-weight: 300; }
   h2 { font-weight: 400; font-size: 1.25rem; letter-spacing: -.015em;
        margin: 4rem 0 .5rem; }
-  .note { color: var(--ink-3); font-size: .88rem; max-width: 40rem; margin: 0 0 1.5rem; }
+  .note { color: var(--ink-3); font-size: .88rem; margin: 0 0 1.5rem; }
 
   /* The matrix: runs down, criteria across. Reading a column tells you whether a
      prompt change moved that check. */
@@ -61,7 +64,8 @@
               font-size: .72rem; }
 
   /* Measurements: no verdict, because convergence is the subject of study. */
-  .meas { border-collapse: collapse; font-size: .85rem; width: 100%; margin-top: 1rem; }
+  .meas { border-collapse: collapse; font-size: .85rem; width: 100%;
+          margin-top: 1rem; }
   .meas th, .meas td { border-bottom: 1px solid var(--rule); padding: .55rem .9rem .55rem 0;
                        text-align: left; }
   .meas th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
@@ -73,7 +77,7 @@
   .matrix th.boundary, .matrix td.boundary { border-left: 1px solid var(--ink-3); }
   .gloss-g { font-size: 1rem; font-weight: 500; margin: 2.5rem 0 .3rem; }
   .gloss-g:first-child { margin-top: 1rem; }
-  .gloss { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); max-width: 42rem; }
+  .gloss { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); }
   .gloss:last-child { border-bottom: 0; }
   .gloss-h { display: flex; justify-content: space-between; align-items: baseline;
              gap: 1.5rem; margin-bottom: .45rem; flex-wrap: wrap; }
@@ -88,7 +92,7 @@
 </head>
 <body>
 
-<header class="col">
+<header class="wide">
   <div class="kernel"><a href="index.html">Observation Kernel</a></div>
   <h1>Evals</h1>
   <div class="intro">
@@ -125,14 +129,14 @@
   </div>
 </div>
 
-<div class="col">
+<div class="wide">
   <h2>What each check means</h2>
   <p class="note">Abbreviated in the matrix above; in full here. <b>A</b> is artists,
   <b>C</b> is critics.</p>
   <div id="glossary"></div>
 </div>
 
-<div class="col">
+<div class="wide">
   <h2>Measurements</h2>
   <p class="note">No pass or fail. These are what the run found, and where a control
   exists the isolated arm is given beside it &mdash; what survives isolation is shared
