@@ -155,6 +155,12 @@
   these statistics need a sample, and the early June runs do not have one.</p>
   <table class="meas" id="measurements"></table>
 
+  <details class="gloss-wrap">
+    <summary>What each measurement means</summary>
+    <p class="note">None of these has a pass or fail. They are what the run found.</p>
+    <div id="meas-gloss"></div>
+  </details>
+
   <h2>Thresholds</h2>
   <p class="note">Conventions, not laws. Stated here so they can be argued with rather
   than discovered by reading the source.</p>
@@ -301,6 +307,59 @@ for (const c of entries) {
   </div>`;
 }
 document.getElementById("glossary").innerHTML = gloss;
+
+/* The measurements are a fixed set rendered by fixed code, so their
+   explanations live here rather than travelling with the data as the criteria
+   descriptions do. Each says what the number is, what scale it is on, and what
+   the isolated arm beside it is for. */
+const MEAS = [
+  ["critiques",
+   "how many critiques the run produced",
+   "Sample size, and the reason the other three columns can or cannot be read. "
+   + "Rank correlations and classification rates need a sample; a run of eight "
+   + "critiques is marked thin because a figure computed from it will look like "
+   + "a result and is not one."],
+  ["critics agree",
+   "mean pairwise rank correlation, 0 to 1",
+   "Take every pair of critics, look only at the works they both judged, and ask "
+   + "how alike they ranked them. 0 would be unrelated orderings, 1 identical "
+   + "ones. The figure beside it is the isolated arm, where no critic ever sees "
+   + "a peer — so whatever the isolated critics still reach is agreement that "
+   + "needed no contact, and only the gap between the two can be influence."],
+  ["critics tellable apart",
+   "identification rate against chance",
+   "Strip the names off the critiques and try to work out who wrote each one, "
+   + "using only the writing: each critic gets a profile built from its other "
+   + "critiques, and a critique is assigned to whichever profile it sits closest "
+   + "to. Chance is one divided by the number of critics. Well above chance means "
+   + "the dispositions are doing something to the prose; at chance they would be "
+   + "costume."],
+  ["change per round",
+   "slope of that rate, points per round",
+   "Whether the critics are becoming harder to tell apart as the run goes on. A "
+   + "falling line is convergence in voice, which is a different claim from "
+   + "convergence in vocabulary and measured by a different instrument. The "
+   + "p-value is for the slope being non-zero. Read it against the isolated arm: "
+   + "a fall in both would be something other than peer influence."],
+];
+document.getElementById("meas-gloss").innerHTML = MEAS.map(m => `
+  <div class="gloss">
+    <div class="gloss-h"><span class="gloss-n">${m[0]}</span>
+      <span class="gloss-r">${m[1]}</span></div>
+    <p>${m[2]}</p>
+  </div>`).join("")
+  + (EVALS.some(e => e.coherence && e.coherence.spearman != null) ? `
+  <div class="gloss">
+    <div class="gloss-h"><span class="gloss-n">not shown: score against its own prose</span>
+      <span class="gloss-r">inconclusive</span></div>
+    <p>A fourth thing is measured and deliberately left out of the table. Each
+    critique is compared against a positive and a negative anchor sentence, and that
+    polarity is correlated with the score attached to it &mdash; a score of 0.9 on a
+    damning critique would be incoherent. It came back at
+    ${EVALS[0].coherence.spearman} (p = ${EVALS[0].coherence.p_value}), too weak to
+    read either way. The anchors may simply not separate prose this uniform in tone.
+    Settling it needs a judge, which costs money and is not built.</p>
+  </div>` : "");
 
 document.getElementById("rules").innerHTML = EVALS.length
   ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>
