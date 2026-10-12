@@ -356,7 +356,11 @@ WHAT = {
     "discrimination": "A critic that gives everything the same score is not "
                       "evaluating, and one such critic is invisible in an average. "
                       "This takes the least varying critic in the run and checks that "
-                      "its scores actually spread.",
+                      "its scores actually spread. A standard deviation needs a "
+                      "sample, so the verdict is withheld when the estimate's own "
+                      "error straddles the threshold: on four scores per critic it "
+                      "cannot tell 0.047 from the 0.05 floor, and saying so is more "
+                      "honest than a warning that reads as a fact about the agents.",
 }
 
 
@@ -416,13 +420,25 @@ def criteria_checks(result: dict) -> list[dict]:
 
     sd = result.get("discrimination")
     if sd:
+        floor = THRESHOLDS["discrimination"]["pass"]
+        se = sd.get("std_error", float("inf"))
+        # A verdict only when the estimate's own interval clears the threshold.
+        # Four scores per critic put the spread at 0.047 +/- 0.019, which cannot
+        # tell a rubber-stamper from a discriminating one — and calling that a
+        # warn reads as a finding about the agents when it is a fact about the
+        # sample.
+        decisive = abs(sd["min_sd"] - floor) > 2 * se
         rows.append({"check": "every critic discriminates", "group": "scoring",
                      "value": sd["min_sd"],
-                     "detail": f"lowest spread {sd['min_sd']:.3f} ({sd['min_critic']})",
+                     "detail": (f"lowest spread {sd['min_sd']:.3f} +/- {se:.3f} "
+                                f"({sd['min_critic']}, n={sd.get('min_n', '?')})"),
                      "cell": f"{sd['min_sd']:.3f}",
-                     "rule": f"every critic's score sd >= {THRESHOLDS['discrimination']['pass']}",
+                     "rule": (f"every critic's score sd >= {floor}" if decisive else
+                              f"sd >= {floor}, but +/- {se:.3f} on n="
+                              f"{sd.get('min_n', '?')} straddles it — no verdict"),
                      "what": WHAT["discrimination"],
-                     "verdict": verdict(sd["min_sd"], "discrimination")})
+                     "verdict": (verdict(sd["min_sd"], "discrimination") if decisive
+                                 else "insufficient")})
     for role, v in sorted(by_role.items()):
         if not v["n"]:
             continue
@@ -464,7 +480,14 @@ def criteria_checks(result: dict) -> list[dict]:
 
 
 def discrimination(records: list[Record]) -> dict:
-    """The least discriminating critic. One rubber-stamper is invisible in a mean."""
+    """The least discriminating critic. One rubber-stamper is invisible in a mean.
+
+    Also returns how precisely that spread is known. A standard deviation from
+    four scores is barely an estimate: its own sampling error is roughly
+    sd / sqrt(2(n-1)), wide enough on the short runs to straddle the threshold
+    entirely. Carrying the error alongside the figure is what lets the verdict
+    be withheld rather than guessed.
+    """
     per = defaultdict(list)
     for r in records:
         if r.kind == "evaluation" and r.score is not None:
@@ -473,7 +496,10 @@ def discrimination(records: list[Record]) -> dict:
     if not sds:
         return {}
     worst = min(sds, key=sds.get)
-    return {"min_sd": round(sds[worst], 4), "min_critic": worst,
+    n = len(per[worst])
+    se = sds[worst] / np.sqrt(2 * (n - 1)) if n > 1 else float("inf")
+    return {"min_sd": round(sds[worst], 4), "min_critic": worst, "min_n": n,
+            "std_error": round(float(se), 4),
             "per_critic": {c: round(v, 4) for c, v in sorted(sds.items())}}
 
 

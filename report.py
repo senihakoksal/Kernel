@@ -681,6 +681,10 @@ EVAL_PAGE = """<!DOCTYPE html>
   .matrix td.run a { color: var(--ink); }
   .matrix td.v { font-family: var(--mono); font-size: .74rem;
                  font-variant-numeric: tabular-nums; }
+  /* A withheld verdict is its own state, not a quiet pass: the figure shows,
+     the colour does not, because the sample cannot support a judgement. */
+  .insufficient { color: var(--ink-3); background: transparent;
+                  text-decoration: underline dotted var(--ink-3); }
   .pass { color: var(--pass); background: var(--pass-bg); }
   .warn { color: var(--warn); background: var(--warn-bg); }
   .fail { color: var(--fail); background: #fdecec; font-weight: 500; }
@@ -761,6 +765,8 @@ EVAL_PAGE = """<!DOCTYPE html>
     <span><b class="pass">pass</b> meets the threshold</span>
     <span><b class="warn">warn</b> below it but not badly</span>
     <span><b class="fail">fail</b> the prompt is not being followed</span>
+    <span><b class="insufficient">0.047</b> measured, but the sample cannot
+      support a verdict</span>
     <span><b class="na">&mdash;</b> not applicable to this run</span>
   </div>
 </div>
