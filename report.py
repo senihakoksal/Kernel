@@ -667,6 +667,12 @@ EVAL_PAGE = """<!DOCTYPE html>
   .meas th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
   .meas td.n { font-family: var(--mono); font-size: .78rem;
                font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .matrix th.grp { font-size: .62rem; letter-spacing: .06em; color: var(--ink-3);
+                   text-align: left; padding-bottom: .3rem; font-weight: 400;
+                   border-bottom: 1px solid var(--rule); }
+  .matrix th.boundary, .matrix td.boundary { border-left: 1px solid var(--ink-3); }
+  .gloss-g { font-size: 1rem; font-weight: 500; margin: 2.5rem 0 .3rem; }
+  .gloss-g:first-child { margin-top: 1rem; }
   .gloss { padding: 1.1rem 0; border-bottom: 1px solid var(--rule); max-width: 42rem; }
   .gloss:last-child { border-bottom: 0; }
   .gloss-h { display: flex; justify-content: space-between; align-items: baseline;
@@ -702,7 +708,8 @@ EVAL_PAGE = """<!DOCTYPE html>
   <h2>Criteria</h2>
   <p class="note">One row per run, newest first. Each cell shows the measured value;
   the colour is a second signal, never the only one. Hover a cell for the rule it was
-  judged against. Each run is judged against the length rule it was actually given,
+  judged against. Columns are ordered by what they tell you: what the agents did
+  first, output format last. Each run is judged against the length rule it was actually given,
   recorded in its own sidecar &mdash; so editing the prompt will not retroactively
   turn old rows red.</p>
   <div style="overflow-x:auto"><table class="matrix" id="matrix"></table></div>
@@ -768,17 +775,40 @@ const shortName = c => c
   .replace("artworks are not restatements", "new&nbsp;works")
   .replace("every critic discriminates", "discriminates");
 
-let head = '<thead><tr><th class="run">run</th>'
-  + columns.map(c => `<th>${shortName(c)}</th>`).join("") + "</tr></thead>";
+/* Group the columns so the ordering is explained rather than arbitrary: the
+   behavioural checks lead because they are about what the agents did, and the
+   format checks follow. A rule marks the boundary. */
+const GROUP_LABEL = {task: "did the job", scoring: "scores usable",
+                     contract: "output format"};
+const groupOf = {};
+for (const e of EVALS) for (const c of e.criteria) groupOf[c.check] = c.group;
+
+const spans = [];
+for (const col of columns) {
+  const g = groupOf[col];
+  if (spans.length && spans[spans.length - 1].g === g) spans[spans.length - 1].n++;
+  else spans.push({g, n: 1});
+}
+let head = '<thead><tr><th class="run"></th>'
+  + spans.map(sp => `<th class="grp" colspan="${sp.n}">${GROUP_LABEL[sp.g] || sp.g}</th>`).join("")
+  + '</tr><tr><th class="run">run</th>';
+let firstOfGroup = new Set();
+let seenG = null;
+for (const col of columns) {
+  if (groupOf[col] !== seenG) { firstOfGroup.add(col); seenG = groupOf[col]; }
+}
+head += columns.map(c =>
+  `<th class="${firstOfGroup.has(c) ? "boundary" : ""}">${shortName(c)}</th>`).join("")
+  + "</tr></thead>";
 let body = "<tbody>" + EVALS.map(e => {
   const by = {};
   for (const c of e.criteria) by[c.check] = c;
   const cells = columns.map(col => {
     const c = by[col];
-    if (!c) return '<td class="na">&mdash;</td>';
+    if (!c) return `<td class="na ${firstOfGroup.has(col) ? "boundary" : ""}">&mdash;</td>`;
     const shown = c.detail.length > 14 ? c.detail.split(" ")[0] : c.detail;
-    return `<td class="v ${c.verdict}" title="${esc(c.rule)} — measured ${esc(c.detail)}">`
-         + `${esc(shown)}</td>`;
+    return `<td class="v ${c.verdict} ${firstOfGroup.has(col) ? "boundary" : ""}"`
+         + ` title="${esc(c.rule)} — measured ${esc(c.detail)}">${esc(shown)}</td>`;
   }).join("");
   return `<tr><td class="run"><a href="index.html">${esc(e.label)}</a></td>${cells}</tr>`;
 }).join("") + "</tbody>";
@@ -824,12 +854,31 @@ const entries = [];
 for (const e of EVALS)
   for (const c of e.criteria)
     if (c.what && !seen.has(c.check)) { seen.add(c.check); entries.push(c); }
-document.getElementById("glossary").innerHTML = entries.map(c => `
-  <div class="gloss">
+const GROUP_HEAD = {
+  task: ["What the agents did",
+         "Whether each agent actually performed the task it was given. These say "
+         + "the most about whether a run means anything."],
+  scoring: ["Whether the scores are usable",
+            "No ground truth exists for whether a work deserves 0.72, so these ask "
+            + "only whether the scores carry information at all."],
+  contract: ["Whether the output format was followed",
+             "The rules the system prompt states outright. Cheap to check, and the "
+             + "least interesting until one of them fails."],
+};
+let gloss = "", lastG = null;
+for (const c of entries) {
+  if (c.group !== lastG) {
+    const h = GROUP_HEAD[c.group] || [c.group, ""];
+    gloss += `<h3 class="gloss-g">${h[0]}</h3><p class="note">${h[1]}</p>`;
+    lastG = c.group;
+  }
+  gloss += `<div class="gloss">
     <div class="gloss-h"><span class="gloss-n">${esc(c.check)}</span>
       <span class="gloss-r">${esc(c.rule)}</span></div>
     <p>${esc(c.what)}</p>
-  </div>`).join("");
+  </div>`;
+}
+document.getElementById("glossary").innerHTML = gloss;
 
 document.getElementById("rules").innerHTML = EVALS.length
   ? Object.entries(EVALS[0].thresholds).map(([k, v]) =>

@@ -373,12 +373,18 @@ def verdict(value, key, higher_is_better=True):
 def criteria_checks(result: dict) -> list[dict]:
     """The pass/fail view: one row per criterion, per role where it differs.
 
-    Each row carries the measured value, the threshold it was judged against and
-    the verdict, so the page can show the rule rather than just the colour.
+    Each row carries the measured value, the threshold it was judged against,
+    the verdict and a group. ORDER MATTERS: the behavioural checks come first —
+    whether a critic judged the work it was handed, whether an artwork is new,
+    whether a critic discriminates at all — because those are about what the
+    agents did. Format compliance follows. A reader scanning left to right
+    should meet the substantive checks before the word counts, and the page
+    builds its columns and its glossary from this list so both follow it.
     """
     conf = result["conformance"]
     lo, hi = conf["band"]
-    rows = []
+    rows = []          # behaviour: what the agents did
+    contract = []      # format: how they packaged it
 
     by_role = {}
     for a in conf["agents"].values():
@@ -387,38 +393,6 @@ def criteria_checks(result: dict) -> list[dict]:
                                             "title_ok", "titled", "score_ok", "scored")})
         for k in r:
             r[k] += a[k]
-
-    for role, v in sorted(by_role.items()):
-        if not v["n"]:
-            continue
-        rows.append({"check": f"{role}s: content {lo}-{hi} words", "group": "contract",
-                     "value": v["in_band"] / v["n"], "detail": f"{v['in_band']}/{v['n']}",
-                     "rule": f">= {THRESHOLDS['length']['pass']:.0%} within the band",
-                     "what": WHAT["length"].format(lo=lo, hi=hi),
-                     "verdict": verdict(v["in_band"] / v["n"], "length")})
-        rows.append({"check": f"{role}s: reasoning <= 2 sentences", "group": "contract",
-                     "value": v["reason_ok"] / v["n"], "detail": f"{v['reason_ok']}/{v['n']}",
-                     "rule": f">= {THRESHOLDS['reasoning']['pass']:.0%}",
-                     "what": WHAT["reasoning"],
-                     "verdict": verdict(v["reason_ok"] / v["n"], "reasoning")})
-        rows.append({"check": f"{role}s: role fields correct", "group": "contract",
-                     "value": v["field_ok"] / v["n"], "detail": f"{v['field_ok']}/{v['n']}",
-                     "rule": "every record (artists omit score, critics omit title)",
-                     "what": WHAT["fields"],
-                     "verdict": verdict(v["field_ok"] / v["n"], "fields")})
-        if role == "artist" and v["titled"]:
-            rows.append({"check": "artists: title <= 6 words", "group": "contract",
-                         "value": v["title_ok"] / v["titled"],
-                         "detail": f"{v['title_ok']}/{v['titled']}",
-                         "rule": f">= {THRESHOLDS['title']['pass']:.0%}",
-                         "what": WHAT["title"],
-                         "verdict": verdict(v["title_ok"] / v["titled"], "title")})
-        if role == "critic" and v["scored"]:
-            rows.append({"check": "critics: score present and in range", "group": "contract",
-                         "value": v["score_ok"] / v["n"], "detail": f"{v['score_ok']}/{v['n']}",
-                         "rule": "every critique, 0.0-1.0",
-                         "what": WHAT["scores_valid"],
-                         "verdict": verdict(v["score_ok"] / v["n"], "scores_valid")})
 
     t = result["on_target"]
     if t.get("top1") is not None:
@@ -446,7 +420,39 @@ def criteria_checks(result: dict) -> list[dict]:
                      "rule": f"every critic's score sd >= {THRESHOLDS['discrimination']['pass']}",
                      "what": WHAT["discrimination"],
                      "verdict": verdict(sd["min_sd"], "discrimination")})
-    return rows
+    for role, v in sorted(by_role.items()):
+        if not v["n"]:
+            continue
+        contract.append({"check": f"{role}s: content {lo}-{hi} words", "group": "contract",
+                     "value": v["in_band"] / v["n"], "detail": f"{v['in_band']}/{v['n']}",
+                     "rule": f">= {THRESHOLDS['length']['pass']:.0%} within the band",
+                     "what": WHAT["length"].format(lo=lo, hi=hi),
+                     "verdict": verdict(v["in_band"] / v["n"], "length")})
+        contract.append({"check": f"{role}s: reasoning <= 2 sentences", "group": "contract",
+                     "value": v["reason_ok"] / v["n"], "detail": f"{v['reason_ok']}/{v['n']}",
+                     "rule": f">= {THRESHOLDS['reasoning']['pass']:.0%}",
+                     "what": WHAT["reasoning"],
+                     "verdict": verdict(v["reason_ok"] / v["n"], "reasoning")})
+        contract.append({"check": f"{role}s: role fields correct", "group": "contract",
+                     "value": v["field_ok"] / v["n"], "detail": f"{v['field_ok']}/{v['n']}",
+                     "rule": "every record (artists omit score, critics omit title)",
+                     "what": WHAT["fields"],
+                     "verdict": verdict(v["field_ok"] / v["n"], "fields")})
+        if role == "artist" and v["titled"]:
+            contract.append({"check": "artists: title <= 6 words", "group": "contract",
+                         "value": v["title_ok"] / v["titled"],
+                         "detail": f"{v['title_ok']}/{v['titled']}",
+                         "rule": f">= {THRESHOLDS['title']['pass']:.0%}",
+                         "what": WHAT["title"],
+                         "verdict": verdict(v["title_ok"] / v["titled"], "title")})
+        if role == "critic" and v["scored"]:
+            contract.append({"check": "critics: score present and in range", "group": "contract",
+                         "value": v["score_ok"] / v["n"], "detail": f"{v['score_ok']}/{v['n']}",
+                         "rule": "every critique, 0.0-1.0",
+                         "what": WHAT["scores_valid"],
+                         "verdict": verdict(v["score_ok"] / v["n"], "scores_valid")})
+
+    return rows + contract
 
 
 def discrimination(records: list[Record]) -> dict:
