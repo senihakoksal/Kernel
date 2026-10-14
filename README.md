@@ -311,6 +311,72 @@ colour is attributable to an edit rather than a guess — and each run is judged
 against the length rule it was actually given, so editing the prompt does not
 retroactively redden old rows.
 
+### Tier 2 — the judged checks, and hand labels
+
+Two questions need a reader, not a rule: does a critic actually write its
+disposition, and is the score legible from the prose it is attached to? The free
+sentiment proxy for the second came back at rho = 0.08, which is the reason
+`judge.py` exists.
+
+Both questions are put as tasks with ground truth in the log, so a human and a
+model can be scored against truth independently and against each other. **wrote**
+— six dispositions, lettered; which one wrote this critique? Chance is 1/6.
+**score** — the number has been removed; recover it. The null is predicting the
+global mean, which gives MAE 0.10. Asking a judge to rate adherence out of five
+was the obvious alternative and is the worse one: with no ground truth, a judge
+disagreeing with a human tells you nothing about which of them is right.
+
+The hand labels are not only judge calibration. The agents are Sonnet 4.6, so
+any Claude judging them shares priors with them, and a judge that identifies
+dispositions brilliantly may be recognising its own family's habits. The human
+is the family-independent reference point: if the judge scores far above the
+human, that gap is the shared prior and the judged numbers are not a property of
+the work.
+
+One thing had to be fixed before any of it was worth measuring. 44% of the
+critiques name their own influence by surname — *"But Ruskin would ask: where is
+the craftsman's restraint?"* — and almost none name anyone else's. Left in, the
+first task would be a lookup rather than a reading, so every critic's influence
+is redacted to `[name removed]` before either reader sees it, and whether a
+critique signposted is kept as a field: accuracy split by it is reported,
+because "adherence is mostly signposting" is a finding and not an inconvenience.
+Artists' influences stay in, since they describe the work, which is shown anyway.
+
+The sample is 25 critiques balanced across both arms and all six critics,
+deterministic from a seed, and the sheet is told nothing about the score
+distribution — a rater who knew the mean was 0.74 would pull every estimate
+toward it and the recovered correlation would measure the briefing.
+
+    uv run python judge.py sheet        # draw the sample, write the sheet
+    uv run python judge.py estimate     # tokens and cost; no calls
+    uv run python judge.py run --confirm   # the only command that spends money
+    uv run python judge.py score        # human vs judge vs truth
+
+Labels and judge answers live in `labels/` and are committed: one costs a
+person's attention and the other costs money, so neither belongs with the
+derived figures.
+
+The first set of labels is in, and needs another eye. 23 of 25 attributions
+were right against 17% by chance — 100% where the critique had named its
+influence before redaction, 83% where it never named anyone, and the two misses
+are a mutual Sontag/Ruskin swap, which is the confusion a reader makes and not
+noise. **But the only labeller so far wrote the dispositions being identified.**
+That makes 92% an upper bound set by the roster's author, not evidence that a
+reader can tell these critics apart, and the number is not worth reporting as
+the latter until someone who did not write the roster has read a set. Every
+result file carries that caveat with it, because a number read six months later
+will not remember who produced it.
+
+The score labels from that set were thrown away, and the reason is worth
+recording. They came back at rho 0.95, which was too good: 80% of them sat
+exactly on the real score's rounding grid with an inversion rate of 1.3%, and no
+reading of prose does that. The answers had been written into a plaintext file
+beside the sheet — the answer key next to the exam. Questions and answers are
+now separate files with the answers base64'd, a blindfold rather than a secret
+so that looking has to be deliberate; a fresh draw skips every critique already
+shown to a rater; and the signature itself is checked on every set from now on,
+since a flat correlation would never have revealed it.
+
 ## Setup
 
 ```sh
