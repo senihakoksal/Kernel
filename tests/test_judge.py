@@ -358,7 +358,9 @@ def test_score_labels_splits_accuracy_by_whether_the_critique_signposted():
         pick = it.critic if k < 3 else "nobody"
         judge_ans[it.item_id] = {"wrote": {"wrote": pick}}
     out = score_labels(items, {}, judge_ans, key_for(sorted(DISPOSITIONS)))
-    assert out["wrote"]["by_signposting"] == {"signposted": 1.0, "never_named": 0.0}
+    assert out["wrote"]["by_signposting"]["judge"] == {"signposted": 1.0,
+                                                       "never_named": 0.0}
+    assert "human" not in out["wrote"]["by_signposting"]   # nobody labelled it
 
 
 # --- provenance and safety ----------------------------------------------------

@@ -573,11 +573,17 @@ def score_labels(items: list[Item], human: dict, judge: dict,
         "kappa": (round(float(cohen_kappa_score([hw[i] for i in both],
                                                 [jw[i] for i in both])), 3)
                   if len(both) >= 5 else None),
+        # Split for both readers, not just the judge: the gap between a
+        # critique whose influence was named (and then redacted) and one that
+        # never named anyone is the difference between recognising a thesis and
+        # recognising a signpost, and it is worth seeing per reader.
         "by_signposting": {
-            kind: round(float(np.mean([jw[i] == truth[i] for i in jw
-                                       if by_id[i].signposted is flag])), 3)
-            for kind, flag in (("signposted", True), ("never_named", False))
-            if any(by_id[i].signposted is flag for i in jw)},
+            who: {kind: round(float(np.mean(
+                      [ans[i] == truth[i] for i in ans
+                       if by_id[i].signposted is flag])), 3)
+                  for kind, flag in (("signposted", True), ("never_named", False))
+                  if any(by_id[i].signposted is flag for i in ans)}
+            for who, ans in (("human", hw), ("judge", jw)) if ans},
         "disagreements": [
             {"item": i, "truth": truth[i], "human": hw[i], "judge": jw[i],
              "judge_why": judge[i]["wrote"].get("why", "")}
@@ -898,6 +904,15 @@ def main() -> None:
         print(f"  no judge answers yet ({p['judge']}) — human labels only")
     result = score_labels(items, human, judge, key)
     result["signposting"] = signposting
+    # Which run and which arms these labels came from. Recorded with the result
+    # so the page can attribute a label set without re-deriving it from a
+    # filename, and so a result read later still knows what it is about.
+    result["set_id"] = set_id
+    result["logs"] = {k: v.name for k, v in logs.items()}
+    result["judge_model"] = (json.loads(p["judge"].read_text()).get("model")
+                             if p["judge"].exists() else None)
+    result["labelled"] = sum(
+        1 for v in human.values() if v.get("wrote") or v.get("score") is not None)
     p["result"].write_text(json.dumps(result, indent=2) + "\n")
 
     w, s = result["wrote"], result["score"]
@@ -906,9 +921,10 @@ def main() -> None:
           f"judge {w['judge_accuracy']} (n={w['n_judge']})")
     print(f"    the two agree on {w['agree_rate']} of {w['n_both']} shared items, "
           f"kappa {w['kappa']}")
-    if w.get("by_signposting"):
-        split = "   ".join(f"{k} {v}" for k, v in sorted(w["by_signposting"].items()))
-        print(f"    judge, split by whether the critique had named its influence: {split}")
+    for who, split in sorted(w.get("by_signposting", {}).items()):
+        shown = "   ".join(f"{k} {v}" for k, v in sorted(split.items()))
+        print(f"    {who}, split by whether the critique had named its "
+              f"influence: {shown}")
     if result.get("signposting"):
         for arm, d in sorted(result["signposting"].items()):
             print(f"    ({arm}: {d['named_own_influence']}/{d['n']} critiques named "

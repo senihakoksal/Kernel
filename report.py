@@ -725,6 +725,27 @@ EVAL_PAGE = """<!DOCTYPE html>
   .gloss-r { font-family: var(--mono); font-size: .72rem; color: var(--ink-3);
              white-space: nowrap; }
   .gloss p { margin: 0; font-size: .89rem; line-height: 1.65; color: var(--ink-2); }
+  /* A caveat is not a verdict, so it takes no status colour — those are
+     reserved. A left rule and a reading measure are enough to mark it as
+     something that must be read with the number beside it. */
+  .caveat { max-width: 42rem; border-left: 2px solid var(--ink-3);
+            padding: .1rem 0 .1rem 1.1rem; margin: 1.6rem 0 0; }
+  .caveat p { margin: 0 0 .8rem; font-size: .88rem; line-height: 1.65;
+              color: var(--ink-2); }
+  .caveat p:last-child { margin-bottom: 0; }
+  .caveat b { font-weight: 500; color: var(--ink); }
+  .labels { border-collapse: collapse; font-size: .85rem; width: 100%;
+            max-width: 58rem; margin-top: 1rem; }
+  .labels th, .labels td { border-bottom: 1px solid var(--rule);
+                           padding: .7rem .9rem .7rem 0; text-align: left;
+                           vertical-align: top; }
+  .labels th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
+  .labels td.n { font-family: var(--mono); font-size: .78rem;
+                 font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .labels .q { font-size: .92rem; }
+  .labels .sub { display: block; font-size: .8rem; color: var(--ink-3);
+                 margin-top: .25rem; }
+  .withheld { color: var(--ink-3); text-decoration: underline dotted var(--ink-3); }
   .rules { font-size: .82rem; color: var(--ink-3); }
   .rules code { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
   footer { margin: 6rem 0 5rem; font-size: .85rem; color: var(--ink-3); }
@@ -802,7 +823,32 @@ EVAL_PAGE = """<!DOCTYPE html>
     <p class="note">None of these has a pass or fail. They are what the run found.</p>
     <div id="meas-gloss"></div>
   </details>
+</div>
 
+<div class="wide" id="labels-section" hidden>
+  <h2>Hand labels</h2>
+  <p class="note">Two questions need a reader rather than a rule: does a critic
+  actually write its disposition, and is the score legible from the prose attached
+  to it. Both are put as tasks whose answers are already in the log &mdash; pick
+  which of six lettered dispositions wrote this critique, and recover the score
+  that was removed from it &mdash; so a person and a model can each be scored
+  against truth and against each other. Everything above this point is free and
+  deterministic; this is the one place a human had to read 25 critiques.</p>
+  <table class="labels" id="labels"></table>
+  <div class="caveat" id="label-caveats"></div>
+
+  <details class="gloss-wrap">
+    <summary>How the labelling works</summary>
+    <div id="label-gloss"></div>
+  </details>
+
+  <footer>
+    <a href="index.html">&larr; studio archive</a> &nbsp;&middot;&nbsp;
+    <a href="https://github.com/senihakoksal/Kernel" target="_blank" rel="noopener">github.com/senihakoksal/Kernel</a>
+  </footer>
+</div>
+
+<div class="wide" id="no-labels-footer">
   <footer>
     <a href="index.html">&larr; studio archive</a> &nbsp;&middot;&nbsp;
     <a href="https://github.com/senihakoksal/Kernel" target="_blank" rel="noopener">github.com/senihakoksal/Kernel</a>
@@ -811,6 +857,7 @@ EVAL_PAGE = """<!DOCTYPE html>
 
 <script>
 const EVALS = __EVALS_JSON__;
+const LABELS = __LABELS_JSON__;
 
 function esc(s) {
   const d = document.createElement("div");
@@ -1011,6 +1058,118 @@ for (const e of EVALS)
       const names = governs.get(c.key);
       if (!names.includes(c.check)) names.push(c.check);
     }
+/* Hand labels. One label set, not one per run: the free checks run over every
+   log, but this is a person reading 25 critiques, so it is a section rather
+   than another column in the matrix above. The section hides itself when no
+   set has been scored. */
+if (LABELS.length) {
+  const L = LABELS[0], w = L.wrote, sc = L.score;
+  document.getElementById("labels-section").hidden = false;
+  document.getElementById("no-labels-footer").hidden = true;
+
+  const pc = v => v == null ? "&mdash;" : (v * 100).toFixed(0) + "%";
+  const hits = (acc, n) => acc == null ? "" : `${Math.round(acc * n)}/${n}`;
+  const split = who => {
+    const d = (w.by_signposting || {})[who];
+    if (!d || d.signposted == null || d.never_named == null) return "";
+    return `<span class="sub">${pc(d.signposted)} where the critique had named its
+      influence before redaction, ${pc(d.never_named)} where it never named
+      anyone</span>`;
+  };
+  const copied = sc.human_looks_copied || {};
+
+  const personWrote = w.human_accuracy == null
+    ? `<span class="na">not labelled</span>`
+    : `${pc(w.human_accuracy)} <span class="sub">${hits(w.human_accuracy, w.n_human)}
+       correct</span>`;
+  // A number drawn from labels that match the answer key is not reported as a
+  // number. The reason shows in its place, because a blank would read as
+  // "not done yet".
+  const personScore = copied.flag
+    ? `<span class="withheld">withheld</span>
+       <span class="sub">${pc(copied.on_rounding_grid)} of the answers sit on the
+       real score's rounding grid &mdash; the answer key, not a reading</span>`
+    : sc.human.spearman == null
+      ? `<span class="na">not labelled</span>`
+      : `rho ${sc.human.spearman} <span class="sub">MAE ${sc.human.mae}</span>`;
+  const judgeCell = v => v == null
+    ? `<span class="na">not run</span>` : v;
+
+  document.getElementById("labels").innerHTML = `
+    <thead><tr><th>question</th><th>a person</th><th>the baseline</th>
+      <th>the judge${L.judge_model ? " (" + esc(L.judge_model) + ")" : ""}</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="q">who wrote it${split("human")}</td>
+        <td class="n">${personWrote}</td>
+        <td class="n">${pc(w.chance)} <span class="sub">by chance, 1 in
+          ${Math.round(1 / w.chance)}</span></td>
+        <td class="n">${judgeCell(w.judge_accuracy == null ? null :
+            pc(w.judge_accuracy) + split("judge"))}</td>
+      </tr>
+      <tr>
+        <td class="q">recovering the score
+          <span class="sub">the number was removed from the critique</span></td>
+        <td class="n">${personScore}</td>
+        <td class="n">MAE ${sc.mean_baseline_mae} <span class="sub">predicting the
+          mean of the ${L.n_items} labelled scores</span></td>
+        <td class="n">${judgeCell(sc.judge.spearman == null ? null :
+            "rho " + sc.judge.spearman)}</td>
+      </tr>
+      <tr>
+        <td class="q">the two readers agree
+          <span class="sub">whether the judge can stand in for a person at all</span></td>
+        <td class="n" colspan="3">${w.kappa == null
+          ? `<span class="na">needs both a person and the judge on the same items</span>`
+          : `kappa ${w.kappa} on who wrote it, rho ${sc.human_judge_spearman} on the
+             score, over ${w.n_both} shared items`}</td>
+      </tr>
+    </tbody>`;
+
+  document.getElementById("label-caveats").innerHTML =
+    (L.caveats || []).map(c => `<p>${esc(c)}</p>`).join("");
+
+  const sp = L.signposting || {};
+  const spLine = Object.keys(sp).length
+    ? Object.entries(sp).map(([arm, d]) =>
+        `${arm} ${d.named_own_influence}/${d.n} (${pc(d.rate)})`).join(", ")
+    : null;
+  document.getElementById("label-gloss").innerHTML = `
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">who wrote it</span>
+        <span class="gloss-r">chance ${pc(w.chance)}</span></div>
+      <p>The six critic dispositions are listed, lettered, and the reader picks the
+      one that wrote the critique in front of them. The critic's name and score are
+      removed. ${spLine ? `So is every critic's named influence: ` + spLine + ` of
+      critiques name their own influence by surname and almost none name anyone
+      else's, so left in, the question would be a lookup for "Ruskin" rather than a
+      reading. Whether a critique signposted is kept, and accuracy is reported split
+      by it.` : ""}</p>
+    </div>
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">recovering the score</span>
+        <span class="gloss-r">null: MAE ${sc.mean_baseline_mae}</span></div>
+      <p>The critic attached a number from 0.0 to 1.0 and it has been removed; the
+      reader puts it back. There was no rubric in the prompt beyond that one line, so
+      the question is not whether a score is correct &mdash; it is whether the
+      critic's own scale is legible from the critic's own prose. The null is
+      predicting the same number every time: the mean of the ${L.n_items} scores in
+      this set, which gets MAE ${sc.mean_baseline_mae}. Over all 288 critiques in
+      the run it is 0.103.</p>
+    </div>
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">why a person at all</span>
+        <span class="gloss-r">${L.labelled || 0} of ${L.n_items} labelled</span></div>
+      <p>The agents are Sonnet 4.6, so any Claude judging them shares priors with
+      them: a judge that identifies dispositions brilliantly may be recognising its
+      own family's habits rather than reading character off the page. The person is
+      the family-independent reference point. If the judge scores far above a human,
+      that gap is the shared prior and the judged number is not a property of the
+      work &mdash; which is why the judge is not reported until it has been checked
+      against labels on the same items.</p>
+    </div>`;
+}
+
 document.getElementById("rules").innerHTML = EVALS.length
   ? [...governs].map(([k, names]) => {
       const t = (EVALS[0].thresholds || {})[k];
@@ -1061,6 +1220,28 @@ def eval_rows(runs: list[dict]) -> list[dict]:
     return rows
 
 
+def label_sets() -> list[dict]:
+    """Scored hand-label sets, newest first.
+
+    A set that has been drawn but not labelled has no result file and does not
+    appear — the page shows what a reader actually produced, not what is
+    waiting for one.
+    """
+    out = []
+    for path in sorted(Path("labels").glob("result_*.json"), reverse=True):
+        try:
+            out.append(json.loads(path.read_text()))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def render_evals(evals: list[dict]) -> str:
+    """The one place the evals page is built, so both call sites stay in step."""
+    return (EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals))
+                     .replace("__LABELS_JSON__", json.dumps(label_sets())))
+
+
 def referenced_figures(runs: list[dict]) -> set[str]:
     """Every figure the page actually links, and nothing else.
 
@@ -1094,7 +1275,7 @@ def publish(runs: list[dict]) -> Path:
     evals = eval_rows(runs)
     if evals:
         (DOCS_DIR / "evals.html").write_text(
-            EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals)))
+            render_evals(evals))
 
     wanted = referenced_figures(runs)
     for name in sorted(wanted):
@@ -1130,7 +1311,7 @@ def main() -> None:
     evals = eval_rows(runs)
     if evals:
         ev_out = SITE_DIR / "evals.html"
-        ev_out.write_text(EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals)))
+        ev_out.write_text(render_evals(evals))
         print(f"Wrote {ev_out} ({len(evals)} evaluated runs).")
 
     if args.publish:

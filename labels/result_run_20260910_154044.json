@@ -9,7 +9,12 @@
     "judge_accuracy": null,
     "agree_rate": null,
     "kappa": null,
-    "by_signposting": {},
+    "by_signposting": {
+      "human": {
+        "signposted": 1.0,
+        "never_named": 0.833
+      }
+    },
     "disagreements": []
   },
   "score": {
@@ -84,5 +89,12 @@
       "named_own_influence": 130,
       "rate": 0.451
     }
-  }
+  },
+  "set_id": "run_20260910_154044",
+  "logs": {
+    "feed": "run_20260910_154044.jsonl",
+    "isolated": "control_run_20260910_154044_20260910_160642.jsonl"
+  },
+  "judge_model": null,
+  "labelled": 25
 }
