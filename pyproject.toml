@@ -19,12 +19,24 @@ analysis = [
     "pandas>=2.0",
     "spacy>=3.7",                 # noun-phrase (descriptor) extraction
     "sentence-transformers>=3.0", # semantic similarity for propagation
+    # The spaCy model is a dependency, not a post-install step. Installed by
+    # hand it survives until the next `uv sync` rebuilds the venv and silently
+    # drops it, and the regression tests then fail with OSError E050 for a
+    # reason that has nothing to do with the change being tested.
+    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "scikit-learn>=1.4",          # agglomerative descriptor clustering (metric= kwarg)
     "plotly>=5.0",                # visualization
 ]
 
-# Test-only dependencies. The suite stubs the Anthropic client, so it needs
-# no API key and makes no network calls.
+# The Tier 2 judge (judge.py). A second provider on purpose: the agents are
+# Sonnet, so a Claude judging them shares their priors — an out-of-family judge
+# is the point, not a convenience. Optional, because nothing else needs it.
+judge = [
+    "openai>=1.0",
+]
+
+# Test-only dependencies. The suite stubs every client, so it needs no API key
+# and makes no network calls.
 dev = [
     "pytest>=8.0",
 ]
@@ -33,6 +45,11 @@ dev = [
 # Flat scaffold: modules live at the repo root, so put it on the path for tests.
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.hatch.metadata]
+# The spaCy model is pinned by URL (see the analysis extra); hatchling refuses
+# direct references unless told they are intentional.
+allow-direct-references = true
 
 [build-system]
 requires = ["hatchling"]

@@ -255,7 +255,8 @@ def test_run_judge_makes_two_calls_per_item_and_maps_the_answers():
     import asyncio
     items = [make_item("i01"), make_item("i02")]
     client = StubClient()
-    answers = asyncio.run(judge.run_judge(items, DISPOSITIONS, "stub-model", client))
+    answers = asyncio.run(judge.run_judge(items, DISPOSITIONS, "stub-model", client,
+                                          provider="anthropic"))
     assert len(client.calls) == 4
     assert all(c["model"] == "stub-model" for c in client.calls)
     for item in items:
@@ -276,7 +277,8 @@ def test_run_judge_records_a_failure_instead_of_dropping_the_item():
                     raise RuntimeError("rate limited")
             self.messages = Messages()
 
-    answers = asyncio.run(judge.run_judge([make_item()], DISPOSITIONS, "m", Boom()))
+    answers = asyncio.run(judge.run_judge([make_item()], DISPOSITIONS, "m", Boom(),
+                                          provider="anthropic"))
     assert "rate limited" in answers["i01"]["wrote"]["error"]
 
 
@@ -394,7 +396,7 @@ def test_run_refuses_to_spend_money_without_confirm():
 
 def test_estimate_counts_both_tasks_and_makes_no_client():
     items = build(5)
-    est = estimate(items, DISPOSITIONS, "m", price=(3.0, 15.0))
+    est = estimate(items, DISPOSITIONS, "claude-test", price=(3.0, 15.0))
     assert est["calls"] == 10
     assert est["input_tokens"] > 0
     assert est["usd"] == round(
@@ -556,3 +558,86 @@ def test_the_money_guard_fires_before_any_other_check():
     assert done.returncode != 0
     assert "--confirm" in done.stderr
     assert "No sample" not in done.stderr
+
+
+# --- two providers, one prompt ------------------------------------------------
+class StubOpenAI:
+    """Shaped like the Responses API: instructions + input -> output_text."""
+
+    def __init__(self, reply='{"wrote": "A", "score": 0.5, "why": "x"}'):
+        self.reply, self.calls = reply, []
+        outer = self
+
+        class Responses:
+            async def create(self, **kw):
+                outer.calls.append(kw)
+                return type("R", (), {"output_text": outer.reply})()
+        self.responses = Responses()
+
+
+def test_the_model_name_decides_the_provider():
+    assert judge.provider_for("claude-opus-5") == "anthropic"
+    for name in ("gpt-5", "gpt-4o", "o3", "o4-mini", "chatgpt-4o-latest"):
+        assert judge.provider_for(name) == "openai", name
+
+
+def test_an_unplaceable_model_name_stops_rather_than_guessing():
+    with pytest.raises(SystemExit) as exc:
+        judge.provider_for("llama-3")
+    assert "provider" in str(exc.value)
+
+
+def test_a_missing_key_names_the_variable_and_does_not_traceback(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(judge, "PROVIDERS", {**judge.PROVIDERS})
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    with pytest.raises(SystemExit) as exc:
+        judge.make_client("openai")
+    assert "OPENAI_API_KEY" in str(exc.value)
+    assert ".env" in str(exc.value)
+
+
+def test_the_openai_judge_gets_the_same_prompt_as_the_anthropic_one():
+    """The comparison between an in-family and an out-of-family judge only
+    means anything if neither is given a hint the other is not."""
+    import asyncio
+    items = [make_item("i01")]
+    a, o = StubClient(), StubOpenAI()
+    asyncio.run(judge.run_judge(items, DISPOSITIONS, "claude-x", a, provider="anthropic"))
+    asyncio.run(judge.run_judge(items, DISPOSITIONS, "gpt-x", o, provider="openai"))
+    anth = {(c["system"], c["messages"][0]["content"]) for c in a.calls}
+    open_ = {(c["instructions"], c["input"]) for c in o.calls}
+    assert anth == open_
+
+
+def test_the_openai_judge_answers_are_parsed_the_same_way():
+    import asyncio
+    answers = asyncio.run(judge.run_judge([make_item()], DISPOSITIONS, "gpt-x",
+                                          StubOpenAI(), provider="openai"))
+    assert answers["i01"]["wrote"]["wrote"] in DISPOSITIONS
+    assert answers["i01"]["score"]["score"] == 0.5
+
+
+def test_reasoning_models_get_a_larger_output_budget():
+    """An OpenAI reasoning model bills thinking against the output ceiling, so
+    a 300-token cap can truncate before the answer is reached."""
+    import asyncio
+    o = StubOpenAI()
+    asyncio.run(judge.run_judge([make_item()], DISPOSITIONS, "o3", o, provider="openai"))
+    assert all(c["max_output_tokens"] == judge.ANSWER_TOKENS["openai"] for c in o.calls)
+    assert judge.ANSWER_TOKENS["openai"] > judge.ANSWER_TOKENS["anthropic"]
+
+
+def test_each_judge_gets_its_own_file():
+    a = judge.judge_path("s1", "claude-opus-5")
+    b = judge.judge_path("s1", "gpt-5")
+    assert a != b
+    assert "/" not in a.name and "/" not in b.name
+
+
+def test_score_refuses_to_guess_between_two_judges(tmp_path, monkeypatch):
+    monkeypatch.setattr(judge, "LABEL_DIR", tmp_path)
+    for model in ("claude-opus-5", "gpt-5"):
+        judge.judge_path("s1", model).write_text(json.dumps(
+            {"set_id": "s1", "model": model, "answers": {}}))
+    assert sorted(judge.judge_files("s1")) == ["claude-opus-5", "gpt-5"]

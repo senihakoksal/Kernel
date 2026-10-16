@@ -348,9 +348,30 @@ distribution — a rater who knew the mean was 0.74 would pull every estimate
 toward it and the recovered correlation would measure the briefing.
 
     uv run python judge.py sheet        # draw the sample, write the sheet
+    uv run python judge.py models --provider openai   # what a key can see
     uv run python judge.py estimate     # tokens and cost; no calls
-    uv run python judge.py run --confirm   # the only command that spends money
-    uv run python judge.py score        # human vs judge vs truth
+    uv run python judge.py run --confirm --judge-model gpt-5
+    uv run python judge.py score --labeller "..."     # reader vs judge vs truth
+
+The judge runs on either provider, chosen by the model name: `claude-*` goes to
+Anthropic, `gpt-*` / `o*` to OpenAI. That is the point rather than a
+convenience. The agents are Sonnet 4.6, so a Claude judging them shares their
+priors and a judge that reads disposition brilliantly may be recognising its
+own family's habits; an out-of-family judge cannot. Both get the identical two
+strings, built once by `judge_request()`, so neither is given a hint the other
+is not — and each writes its own `judge_<set>__<model>.json`, so an in-family
+and an out-of-family judge can answer the same items and be compared.
+
+Keys come from `.env`, which is gitignored: `ANTHROPIC_API_KEY` and
+`OPENAI_API_KEY`. Nothing reads a key from the command line, where it would
+land in shell history, and a missing one exits naming the variable rather than
+raising from inside the SDK. Model names change faster than this file does, so
+`models` asks the key what it can see instead of carrying a list that goes
+stale; listing generates no tokens.
+
+An OpenAI reasoning model bills its thinking against the output budget, so its
+ceiling is 2000 tokens where Anthropic's is 300, and `estimate` says that its
+output figure is a floor rather than a prediction.
 
 Labels and judge answers live in `labels/` and are committed: one costs a
 person's attention and the other costs money, so neither belongs with the

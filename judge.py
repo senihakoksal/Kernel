@@ -456,12 +456,75 @@ def parse_judge(text: str, task: str, key: dict[str, str]) -> dict:
     return out
 
 
-async def run_judge(items: list[Item], dispositions: dict[str, str], model: str,
-                    client=None) -> dict[str, dict]:
-    """Two calls per item. Returns {item_id: {wrote: ..., score: ...}}."""
-    if client is None:
+# --- which model is judging, and therefore which client ----------------------
+# The point of a second provider is that the agents are Sonnet 4.6, so a Claude
+# judging them shares their priors: a judge that reads disposition brilliantly
+# may be recognising its own family's habits. An out-of-family judge cannot do
+# that, which is why routing by model name is a feature here and not plumbing.
+PROVIDERS = {
+    "anthropic": {"prefixes": ("claude",), "env": "ANTHROPIC_API_KEY"},
+    "openai": {"prefixes": ("gpt", "chatgpt", "o1", "o3", "o4"),
+               "env": "OPENAI_API_KEY"},
+}
+
+# A reasoning model bills its thinking against the output budget, so the ceiling
+# is not the size of the answer. The answer itself is a letter or a number plus
+# one sentence either way.
+ANSWER_TOKENS = {"anthropic": 300, "openai": 2000}
+
+
+def provider_for(model: str) -> str:
+    for name, spec in PROVIDERS.items():
+        if model.startswith(spec["prefixes"]):
+            return name
+    sys.exit(f"Cannot tell which provider {model!r} belongs to. Expected a name "
+             "starting with " + ", ".join(
+                 p for spec in PROVIDERS.values() for p in spec["prefixes"]) + ".")
+
+
+def make_client(provider: str):
+    """A client for one provider, or a clean exit saying which key is missing."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    env = PROVIDERS[provider]["env"]
+    if not os.environ.get(env):
+        sys.exit(f"{env} is not set. Put it in .env (which is gitignored) as\n"
+                 f"    {env}=...\n"
+                 "rather than passing it on the command line, where it lands in "
+                 "shell history.")
+    if provider == "anthropic":
         from anthropic import AsyncAnthropic
-        client = AsyncAnthropic(max_retries=5)
+        return AsyncAnthropic(max_retries=5)
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(max_retries=5)
+
+
+async def ask(client, provider: str, model: str, system: str, user: str) -> str:
+    """One judging call, as plain text. Both providers get the same two strings.
+
+    That identity is the whole basis of comparing them: the prompt a judge sees
+    is built once, by judge_request(), and neither provider gets a hint the
+    other does not.
+    """
+    if provider == "anthropic":
+        response = await client.messages.create(
+            model=model, max_tokens=ANSWER_TOKENS["anthropic"], system=system,
+            messages=[{"role": "user", "content": user}])
+        return "".join(b.text for b in response.content
+                       if getattr(b, "type", "") == "text")
+    response = await client.responses.create(
+        model=model, instructions=system, input=user,
+        max_output_tokens=ANSWER_TOKENS["openai"])
+    return response.output_text
+
+
+async def run_judge(items: list[Item], dispositions: dict[str, str], model: str,
+                    client=None, provider: str | None = None) -> dict[str, dict]:
+    """Two calls per item. Returns {item_id: {wrote: ..., score: ...}}."""
+    provider = provider or provider_for(model)
+    if client is None:
+        client = make_client(provider)
     gate = asyncio.Semaphore(MAX_CONCURRENT)
     answers: dict[str, dict] = {it.item_id: {} for it in items}
 
@@ -469,13 +532,10 @@ async def run_judge(items: list[Item], dispositions: dict[str, str], model: str,
         system, user, key = judge_request(item, task, dispositions)
         async with gate:
             try:
-                response = await client.messages.create(
-                    model=model, max_tokens=300, system=system,
-                    messages=[{"role": "user", "content": user}])
+                text = await ask(client, provider, model, system, user)
             except Exception as exc:
                 answers[item.item_id][task] = {"error": f"{type(exc).__name__}: {exc}"}
                 return
-        text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
         answers[item.item_id][task] = parse_judge(text, task, key)
         done = sum(1 for a in answers.values() if len(a) == 2)
         print(f"\r    judged {done}/{len(items)}", end="", flush=True)
@@ -700,6 +760,7 @@ def estimate(items: list[Item], dispositions: dict[str, str], model: str,
     calls = 2 * len(items)
     tokens_out = calls * 80          # a letter or a number, plus one sentence
     out = {"model": model, "items": len(items), "calls": calls,
+           "provider": provider_for(model),
            "input_tokens": tokens_in, "output_tokens": tokens_out}
     if price:
         out["usd"] = round(tokens_in / 1e6 * price[0] + tokens_out / 1e6 * price[1], 4)
@@ -722,8 +783,30 @@ def paths(set_id: str) -> dict[str, Path]:
     return {"items": LABEL_DIR / f"items_{set_id}.json",
             "truth": LABEL_DIR / f"truth_{set_id}.b64",
             "sheet": LABEL_DIR / f"sheet_{set_id}.md",
-            "judge": LABEL_DIR / f"judge_{set_id}.json",
             "result": LABEL_DIR / f"result_{set_id}.json"}
+
+
+def judge_path(set_id: str, model: str) -> Path:
+    """One file per judge, so two judges can sit on the same items.
+
+    That is the experiment the second provider makes possible: an in-family
+    judge and an out-of-family one answering identical prompts about identical
+    critiques. A single judge_<set>.json would make the second run overwrite
+    the first.
+    """
+    safe = re.sub(r"[^A-Za-z0-9.-]", "_", model)
+    return LABEL_DIR / f"judge_{set_id}__{safe}.json"
+
+
+def judge_files(set_id: str) -> dict[str, Path]:
+    """{model: path} for every judge that has answered this set."""
+    out = {}
+    for path in sorted(LABEL_DIR.glob(f"judge_{set_id}__*.json")):
+        try:
+            out[json.loads(path.read_text())["model"]] = path
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return out
 
 
 # Which fields a rater must not see. The first draw kept all of them in
@@ -803,11 +886,15 @@ def used_fingerprints() -> set[str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("command", choices=("sheet", "estimate", "run", "score"))
+    ap.add_argument("command",
+                    choices=("sheet", "estimate", "run", "score", "models"))
     ap.add_argument("--set", dest="set_id", default=None,
                     help="label set id (default: the paired run's stem)")
     ap.add_argument("--n", type=int, default=DEFAULT_N)
-    ap.add_argument("--judge-model", default=JUDGE_MODEL)
+    ap.add_argument("--judge-model", default=JUDGE_MODEL,
+                    help="the judging model; its name picks the provider")
+    ap.add_argument("--provider", default=None, choices=tuple(PROVIDERS),
+                    help="for `models`: which key to ask, without naming a model")
     ap.add_argument("--labeller", default=None,
                     help="who filled in the sheet, e.g. \"a practising critic, "
                          "no involvement in the project\" — recorded with the result")
@@ -823,6 +910,21 @@ def main() -> None:
     if args.command == "run" and not args.confirm:
         sys.exit("`run` makes paid API calls. Re-run with --confirm when you "
                  "mean it, or use `estimate` first.")
+
+    if args.command == "models":
+        # Model names change faster than this file does, so it asks rather than
+        # carrying a list that goes stale. Listing costs nothing and generates
+        # no tokens.
+        provider = args.provider or provider_for(args.judge_model)
+        client = make_client(provider)
+
+        async def show():
+            return [m.id async for m in client.models.list()]
+        names = asyncio.run(show())
+        print(f"  {len(names)} models visible to this {provider} key:")
+        for name in sorted(names):
+            print(f"    {name}")
+        return
 
     LABEL_DIR.mkdir(exist_ok=True)
     logs = default_pair()
@@ -875,7 +977,8 @@ def main() -> None:
                  if args.price_in is not None and args.price_out is not None
                  else PRICING.get(args.judge_model))
         est = estimate(items, dispositions, args.judge_model, price)
-        print(f"\n  {est['calls']} calls to {est['model']} over {est['items']} items")
+        print(f"\n  {est['calls']} calls to {est['model']} "
+              f"({est['provider']}) over {est['items']} items")
         print(f"  roughly {est['input_tokens']:,} input + {est['output_tokens']:,} "
               "output tokens")
         if "usd" in est:
@@ -883,6 +986,9 @@ def main() -> None:
         else:
             print(f"  no confirmed rate for {est['model']} — pass --price-in and "
                   "--price-out to get a figure")
+        if est["provider"] == "openai":
+            print("  a reasoning model bills its thinking as output, so the output "
+                  "figure is a floor and the real one can be several times it")
         if p["sheet"].exists():
             filled, problems = parse_sheet(p["sheet"].read_text())
             done = sum(1 for v in filled.values() if v["wrote"] and v["score"] is not None)
@@ -897,10 +1003,12 @@ def main() -> None:
         answers = asyncio.run(run_judge(items, dispositions, args.judge_model))
         errors = [(i, t, a[t]["error"]) for i, a in answers.items()
                   for t in a if "error" in a[t]]
-        p["judge"].write_text(json.dumps(
-            {"set_id": set_id, "model": args.judge_model, "answers": answers},
+        out = judge_path(set_id, args.judge_model)
+        out.write_text(json.dumps(
+            {"set_id": set_id, "model": args.judge_model,
+             "provider": provider_for(args.judge_model), "answers": answers},
             indent=2) + "\n")
-        print(f"  wrote {p['judge']}"
+        print(f"  wrote {out}"
               + (f" — {len(errors)} of {2*len(items)} calls failed" if errors else ""))
         for i, t, msg in errors[:5]:
             print(f"      {i}/{t}: {msg}")
@@ -912,10 +1020,18 @@ def main() -> None:
     human, problems = parse_sheet(p["sheet"].read_text())
     for msg in problems:
         print(f"  sheet: {msg}")
-    judge = (json.loads(p["judge"].read_text())["answers"]
-             if p["judge"].exists() else {})
+    available = judge_files(set_id)
+    chosen = args.judge_model if args.judge_model in available else None
+    if chosen is None and len(available) == 1:
+        chosen = next(iter(available))
+    elif chosen is None and len(available) > 1:
+        sys.exit("More than one judge has answered this set: "
+                 + ", ".join(sorted(available))
+                 + "\nPick one with --judge-model.")
+    judge = (json.loads(available[chosen].read_text())["answers"]
+             if chosen else {})
     if not judge:
-        print(f"  no judge answers yet ({p['judge']}) — human labels only")
+        print("  no judge has answered this set yet — labels only")
     result = score_labels(items, human, judge, key, args.labeller)
     result["signposting"] = signposting
     # Which run and which arms these labels came from. Recorded with the result
@@ -923,8 +1039,8 @@ def main() -> None:
     # filename, and so a result read later still knows what it is about.
     result["set_id"] = set_id
     result["logs"] = {k: v.name for k, v in logs.items()}
-    result["judge_model"] = (json.loads(p["judge"].read_text()).get("model")
-                             if p["judge"].exists() else None)
+    result["judge_model"] = chosen
+    result["judges_available"] = sorted(available)
     result["labelled"] = sum(
         1 for v in human.values() if v.get("wrote") or v.get("score") is not None)
     p["result"].write_text(json.dumps(result, indent=2) + "\n")
