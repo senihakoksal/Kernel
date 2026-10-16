@@ -113,17 +113,28 @@
               color: var(--ink-2); }
   .caveat p:last-child { margin-bottom: 0; }
   .caveat b { font-weight: 500; color: var(--ink); }
+  /* Each column is aligned to what is in it: the question is prose and reads
+     from the left, every value is a number and lines up on the right so the
+     figures can be compared down a column. Nothing long lives in a value
+     cell — the explaining happens in the question column. */
   .labels { border-collapse: collapse; font-size: .85rem; width: 100%;
             max-width: 58rem; margin-top: 1rem; }
   .labels th, .labels td { border-bottom: 1px solid var(--rule);
-                           padding: .7rem .9rem .7rem 0; text-align: left;
-                           vertical-align: top; }
-  .labels th { font-weight: 400; font-size: .7rem; color: var(--ink-3); }
-  .labels td.n { font-family: var(--mono); font-size: .78rem;
-                 font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .labels .q { font-size: .92rem; }
-  .labels .sub { display: block; font-size: .8rem; color: var(--ink-3);
-                 margin-top: .25rem; }
+                           padding: .85rem 0 .85rem 1.4rem; vertical-align: top; }
+  .labels th { font-weight: 400; font-size: .7rem; color: var(--ink-3);
+               text-align: right; }
+  .labels th:first-child, .labels td:first-child { padding-left: 0;
+                                                   text-align: left; width: 45%; }
+  .labels td.n { font-family: var(--mono); font-size: .82rem; text-align: right;
+                 font-variant-numeric: tabular-nums; white-space: nowrap;
+                 color: var(--ink); }
+  .labels td.wide-note { text-align: left; font-size: .82rem; color: var(--ink-3); }
+  .labels .q { font-size: .92rem; display: block; }
+  .labels .sub { display: block; font-size: .78rem; color: var(--ink-3);
+                 margin-top: .3rem; font-family: var(--text);
+                 font-variant-numeric: normal; }
+  .labels td.n .sub { white-space: normal; }
+  .labels td:first-child .sub { max-width: 26rem; line-height: 1.5; }
   .withheld { color: var(--ink-3); text-decoration: underline dotted var(--ink-3); }
   .rules { font-size: .82rem; color: var(--ink-3); }
   .rules code { font-family: var(--mono); font-size: .78rem; color: var(--ink-2); }
@@ -449,14 +460,6 @@ if (LABELS.length) {
   document.getElementById("no-labels-footer").hidden = true;
 
   const pc = v => v == null ? "&mdash;" : (v * 100).toFixed(0) + "%";
-  const hits = (acc, n) => acc == null ? "" : `${Math.round(acc * n)}/${n}`;
-  const split = who => {
-    const d = (w.by_signposting || {})[who];
-    if (!d || d.signposted == null || d.never_named == null) return "";
-    return `<span class="sub">${pc(d.signposted)} where the critique had named its
-      influence before redaction, ${pc(d.never_named)} where it never named
-      anyone</span>`;
-  };
   const copied = sc.human_looks_copied || {};
 
   const calls = 2 * L.n_items;
@@ -465,54 +468,77 @@ if (LABELS.length) {
       + `${calls} calls &nbsp;·&nbsp; set ${esc(L.set_id || "")}`
     : `${L.n_items} critiques &nbsp;·&nbsp; no judge has answered this set`;
 
-  const personWrote = w.human_accuracy == null
-    ? `<span class="na">not labelled</span>`
-    : `${pc(w.human_accuracy)} <span class="sub">${hits(w.human_accuracy, w.n_human)}
-       correct</span>`;
-  // A number drawn from labels that match the answer key is not reported as a
-  // number. The reason shows in its place, because a blank would read as
-  // "not done yet".
-  const personScore = copied.flag
-    ? `<span class="withheld">withheld</span>
-       <span class="sub">${pc(copied.on_rounding_grid)} of the answers sit on the
-       real score's rounding grid &mdash; the answer key, not a reading</span>`
+  const splitSub = who => {
+    const d = (w.by_signposting || {})[who];
+    if (!d || d.signposted == null || d.never_named == null) return "";
+    return `<span class="sub">${pc(d.never_named)} when the critic never named
+      its influence, ${pc(d.signposted)} when it had</span>`;
+  };
+  const judgeWrote = w.judge_accuracy == null
+    ? `<span class="na">not run</span>`
+    : `${pc(w.judge_accuracy)}${splitSub("judge")}`;
+  // Both score cells show the same measure — how far off the guess was — so the
+  // column can be read down. The rank correlation goes underneath: it answers a
+  // different question (were the works put in the right order) and would not be
+  // comparable with the baseline sitting beside it.
+  const judgeScore = sc.judge.mae == null
+    ? `<span class="na">not run</span>`
+    : `${sc.judge.mae}<span class="sub">and it ranked them in almost the same
+       order the critics did: ${sc.judge.spearman} out of 1</span>`;
+  const humanWrote = w.human_accuracy == null
+    ? `<span class="na">not yet</span>`
+    : `${pc(w.human_accuracy)}${splitSub("human")}`;
+  // A number drawn from answers that reproduce the hidden score is not shown as
+  // a number: the reason goes in its place, because a blank reads as "not done
+  // yet" when what happened is that the answers cannot be used.
+  const humanScore = copied.flag
+    ? `<span class="withheld">withheld</span><span class="sub">the answers
+       reproduce the hidden score exactly</span>`
     : sc.human.spearman == null
-      ? `<span class="na">not labelled</span>`
-      : `rho ${sc.human.spearman} <span class="sub">MAE ${sc.human.mae}</span>`;
-  const judgeCell = v => v == null
-    ? `<span class="na">not run</span>` : v;
+      ? `<span class="na">not yet</span>`
+      : `${sc.human.mae}<span class="sub">ranked them at ${sc.human.spearman}
+         out of 1</span>`;
 
   document.getElementById("labels").innerHTML = `
-    <thead><tr><th>question</th><th>the judge</th><th>the baseline</th>
-      <th>a reader${L.labeller ? ": " + esc(L.labeller) : ""}</th></tr></thead>
+    <thead><tr>
+      <th>what it was asked</th>
+      <th>LLM as a judge</th>
+      <th>guessing</th>
+      <th>a human judge</th>
+    </tr></thead>
     <tbody>
       <tr>
-        <td class="q">who wrote it
-          <span class="sub">six lettered dispositions; pick the one that wrote
-          this critique</span></td>
-        <td class="n">${judgeCell(w.judge_accuracy == null ? null :
-            pc(w.judge_accuracy) + split("judge"))}</td>
-        <td class="n">${pc(w.chance)} <span class="sub">by chance, 1 in
-          ${Math.round(1 / w.chance)}</span></td>
-        <td class="n">${personWrote}</td>
+        <td><span class="q">Who wrote this critique?</span>
+          <span class="sub">Six critic descriptions, lettered A to F. Pick the one
+          that wrote the critique in front of you. The right answer is in the log,
+          so the guess can simply be marked right or wrong.</span></td>
+        <td class="n">${judgeWrote}</td>
+        <td class="n">${pc(w.chance)}<span class="sub">1 in
+          ${Math.round(1 / w.chance)} by chance</span></td>
+        <td class="n">${humanWrote}</td>
       </tr>
       <tr>
-        <td class="q">recovering the score
-          <span class="sub">the number was removed from the critique</span></td>
-        <td class="n">${judgeCell(sc.judge.spearman == null ? null :
-            `rho ${sc.judge.spearman} <span class="sub">MAE ${sc.judge.mae}</span>`)}</td>
-        <td class="n">MAE ${sc.mean_baseline_mae} <span class="sub">predicting the
-          mean of these ${L.n_items}</span></td>
-        <td class="n">${personScore}</td>
+        <td><span class="q">What score did they give it?</span>
+          <span class="sub">Every critique came with a number from 0 to 1. We take
+          it out and ask for it back. The figures are how far off a guess was on
+          average, so smaller is better, and the thing to beat is not knowing
+          anything and saying the average every time.</span></td>
+        <td class="n">${judgeScore}</td>
+        <td class="n">${sc.mean_baseline_mae}<span class="sub">how far off you
+          land by saying the average every time</span></td>
+        <td class="n">${humanScore}</td>
       </tr>
       <tr>
-        <td class="q">the judge agrees with a reader
-          <span class="sub">whether it can stand in for a person at all &mdash;
-          the gate on everything in the row above</span></td>
-        <td class="n" colspan="3">${w.kappa == null
-          ? `<span class="na">needs both a person and the judge on the same items</span>`
-          : `kappa ${w.kappa} on who wrote it, rho ${sc.human_judge_spearman} on the
-             score, over ${w.n_both} shared items`}</td>
+        <td><span class="q">Do the two judges agree with each other?</span>
+          <span class="sub">Until a person answers the same questions, there is
+          nothing to check the model against &mdash; so this row decides whether
+          the two above can be trusted.</span></td>
+        <td class="wide-note" colspan="3">${w.kappa == null
+          ? `<span class="na">Needs a person and the model to have answered the
+             same critiques. Only the model has.</span>`
+          : `They pick the same critic on ${pc(w.agree_rate)} of
+             ${w.n_both} shared critiques (kappa ${w.kappa}), and their score
+             guesses correlate at ${sc.human_judge_spearman}.`}</td>
       </tr>
     </tbody>`;
 
@@ -527,67 +553,72 @@ if (LABELS.length) {
   const m = METHOD || {};
   document.getElementById("label-gloss").innerHTML = `
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">why it is a recovery task and not a rating</span>
-        <span class="gloss-r">the answers are in the log</span></div>
-      <p>The judge is never asked to grade. It is asked to recover two facts the
-      log already holds: which critic wrote a critique, and what number was
-      attached to it. The obvious alternative &mdash; rate this critic's adherence
-      out of five &mdash; has no right answer, so a judge disagreeing with a person
-      would tell you nothing about which of them was right. A forced choice and a
-      number can each be scored against truth, which is the only thing that makes
-      a judge checkable.</p>
+      <div class="gloss-h"><span class="gloss-n">We ask it to guess, not to grade</span>
+        <span class="gloss-r">the answers are already in the log</span></div>
+      <p>The obvious thing to do is ask a model &ldquo;is this critic doing a good
+      job?&rdquo; We don't, because there is no right answer to that. If the model
+      said 4 out of 5 and a person said 2, nothing would tell us which of them was
+      right. So instead we ask two questions the log already knows the answer to:
+      who wrote this, and what number did they put on it. Both can simply be marked
+      right or wrong, which is what makes it possible to check the judge itself.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">why the judge is not a Claude</span>
-        <span class="gloss-r">the agents are Sonnet 4.6</span></div>
-      <p>A Claude judging Sonnet agents shares their priors, so one that identifies
-      dispositions brilliantly may be recognising its own family's habits rather
-      than reading character off the page. An out-of-family model cannot do that.
-      It is the reason the result below can be read as a property of the writing
-      rather than of the family that produced it.</p>
+      <div class="gloss-h"><span class="gloss-n">The judge is from a different
+        company on purpose</span>
+        <span class="gloss-r">the artists and critics are Claude</span></div>
+      <p>The agents in the studio are Claude. If we used a Claude to judge them, a
+      high score would be hard to read: the model might be recognising its own
+      writing habits rather than telling the critics apart. GPT-5.5 was built by a
+      different company and trained separately, so it cannot be doing that. That is
+      why its ${pc(w.judge_accuracy)} says something about the critics' writing
+      rather than about the model that wrote it.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">what is hidden from it</span>
+      <div class="gloss-h"><span class="gloss-n">What the judge is not allowed to see</span>
         <span class="gloss-r">name, score, arm, influence</span></div>
-      <p>The critic's name, the score and the arm are stripped. So is every critic's
-      named influence, replaced with <code>${esc(m.redaction || "[name removed]")}</code>:
-      ${spLine ? spLine + " of critiques name their own influence by surname "
-        + "and almost none name anyone else's, so left in, the first question "
-        + "would be a lookup for &ldquo;Ruskin&rdquo; rather than a reading." : ""} The thesis
-      survives the redaction &mdash; a paraphrase of the aura argument is still
-      recognisably one critic and not another &mdash; and recognising the thesis is
-      what adherence means. The six letters are reshuffled for every item so that
-      position carries no signal, and answers are mapped back to critic names before
-      anything is compared.</p>
+      <p>The critic's name and score are taken out, and so is whether the critique
+      came from the shared or the isolated run. One more thing had to go: ${spLine
+        ? "about 45% of critiques" : "many critiques"} name the critic they are
+      modelled on &mdash; &ldquo;but Ruskin would ask about craft&rdquo; &mdash; and
+      almost none name anyone else's. Leaving that in would turn the first question
+      into looking for a name, so every such name is replaced with
+      <code>${esc(m.redaction || "[name removed]")}</code>. The argument stays; only
+      the name goes, and recognising the argument is the whole point.
+      ${spLine ? "Exactly: " + spLine + "." : ""} The six letters are also shuffled
+      for every critique, so answering &ldquo;A&rdquo; out of habit gets you
+      nowhere.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">what it is shown, and what it may answer</span>
-        <span class="gloss-r">two calls per critique</span></div>
-      <p>Each question is a separate call, so neither answer can lean on the other,
-      and each reply is a single JSON object: a letter or a number, plus one
-      sentence of reasoning kept so that disagreements can be read rather than
-      guessed at. The prompts, verbatim:</p>
+      <div class="gloss-h"><span class="gloss-n">What we actually send it</span>
+        <span class="gloss-r">two separate calls per critique</span></div>
+      <p>The artwork, then the critique, then one question. The two questions go in
+      separate calls so the answer to one cannot lean on the other, and each reply
+      is a short piece of JSON: a letter or a number, plus one sentence saying why.
+      We keep that sentence so that when the model and a person disagree, we can
+      read what the model thought it saw instead of guessing. Here are the prompts
+      exactly as sent:</p>
       ${m.wrote_system ? `<div class="prompt">${esc(m.wrote_system)}</div>` : ""}
       ${m.score_system ? `<div class="prompt">${esc(m.score_system)}</div>` : ""}
       ${m.user_block ? `<div class="prompt">${esc(m.user_block)}</div>` : ""}
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">how the sample is drawn</span>
-        <span class="gloss-r">${L.n_items} critiques</span></div>
-      <p>Balanced across both arms and all six critics and deterministic from a
-      seed, so the judge is not validated on feed-exposed prose alone. The arm is
-      hidden, which keeps the same labels usable as a blind comparison if the set is
-      ever grown; at this size it cannot settle one, since two arms and six critics
-      make two per cell. A critique already shown to a reader is never drawn again.</p>
+      <div class="gloss-h"><span class="gloss-n">How these ${L.n_items} were picked</span>
+        <span class="gloss-r">evenly, and by a fixed recipe</span></div>
+      <p>Two or three from each critic in each of the two runs, spread across all
+      the rounds, chosen by a fixed rule so the same sample comes out every time.
+      Picking evenly matters: if they all came from the shared run, we would only
+      know the judge works on critics who had been reading each other. A critique
+      that has already been shown to someone is never picked again.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">what is still missing</span>
-        <span class="gloss-r">no reader yet</span></div>
-      <p>A judge is not an instrument until it has been checked against a person on
-      the same items, which is the last row of the table and why it is empty. Until
-      someone who did not write the dispositions reads this set, the two figures
-      above are what one model recovered, not what is recoverable. The sheet is
-      drawn and waiting.</p>
+      <div class="gloss-h"><span class="gloss-n">What is still missing</span>
+        <span class="gloss-r">nobody has done this by hand yet</span></div>
+      <p>A judge is only worth something once we know a person would answer the same
+      way. Nobody has sat down with these ${L.n_items} critiques yet, so the honest
+      reading of the numbers above is &ldquo;this is what one model recovered&rdquo;
+      and not &ldquo;this is what is there to be recovered&rdquo;. The sheet is
+      written and waiting for someone who did not write the critic descriptions
+      themselves.</p>
     </div>`;
 }
 
