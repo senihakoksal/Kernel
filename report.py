@@ -728,6 +728,12 @@ EVAL_PAGE = """<!DOCTYPE html>
   /* A caveat is not a verdict, so it takes no status colour — those are
      reserved. A left rule and a reading measure are enough to mark it as
      something that must be read with the number beside it. */
+  .runline { font-family: var(--mono); font-size: .74rem; color: var(--ink-3);
+             margin: .2rem 0 0; }
+  .prompt { font-family: var(--mono); font-size: .72rem; line-height: 1.55;
+            color: var(--ink-2); background: #f5f4f1; border: 1px solid var(--rule);
+            padding: .9rem 1rem; margin: .8rem 0 0; white-space: pre-wrap;
+            overflow-x: auto; max-width: 58rem; }
   .caveat { max-width: 42rem; border-left: 2px solid var(--ink-3);
             padding: .1rem 0 .1rem 1.1rem; margin: 1.6rem 0 0; }
   .caveat p { margin: 0 0 .8rem; font-size: .88rem; line-height: 1.65;
@@ -826,19 +832,20 @@ EVAL_PAGE = """<!DOCTYPE html>
 </div>
 
 <div class="wide" id="labels-section" hidden>
-  <h2>Hand labels</h2>
+  <h2>Judged checks</h2>
   <p class="note">Two questions need a reader rather than a rule: does a critic
   actually write its disposition, and is the score legible from the prose attached
-  to it. Both are put as tasks whose answers are already in the log &mdash; pick
-  which of six lettered dispositions wrote this critique, and recover the score
-  that was removed from it &mdash; so a person and a model can each be scored
-  against truth and against each other. Everything above this point is free and
-  deterministic; this is the one place a human had to read 25 critiques.</p>
+  to it. Everything above this point is free and deterministic. These are not
+  &mdash; they are put to a reader, and that reader is itself under test.</p>
+  <div class="runline" id="judge-provenance"></div>
   <table class="labels" id="labels"></table>
   <div class="caveat" id="label-caveats"></div>
 
   <details class="gloss-wrap">
-    <summary>How the labelling works</summary>
+    <summary>How the judge is asked</summary>
+    <p class="note">The method, and the prompts verbatim. Both are read out of
+    <code>judge.py</code> rather than restated here, so neither can drift from
+    what the judge was actually sent.</p>
     <div id="label-gloss"></div>
   </details>
 
@@ -858,6 +865,7 @@ EVAL_PAGE = """<!DOCTYPE html>
 <script>
 const EVALS = __EVALS_JSON__;
 const LABELS = __LABELS_JSON__;
+const METHOD = __METHOD_JSON__;
 
 function esc(s) {
   const d = document.createElement("div");
@@ -1078,6 +1086,12 @@ if (LABELS.length) {
   };
   const copied = sc.human_looks_copied || {};
 
+  const calls = 2 * L.n_items;
+  document.getElementById("judge-provenance").innerHTML = L.judge_model
+    ? `${esc(L.judge_model)} &nbsp;·&nbsp; ${L.n_items} critiques &nbsp;·&nbsp; `
+      + `${calls} calls &nbsp;·&nbsp; set ${esc(L.set_id || "")}`
+    : `${L.n_items} critiques &nbsp;·&nbsp; no judge has answered this set`;
+
   const personWrote = w.human_accuracy == null
     ? `<span class="na">not labelled</span>`
     : `${pc(w.human_accuracy)} <span class="sub">${hits(w.human_accuracy, w.n_human)}
@@ -1096,31 +1110,32 @@ if (LABELS.length) {
     ? `<span class="na">not run</span>` : v;
 
   document.getElementById("labels").innerHTML = `
-    <thead><tr><th>question</th><th>${L.labeller ? esc(L.labeller)
-        : '<span class="withheld">labeller not recorded</span>'}</th>
-      <th>the baseline</th>
-      <th>the judge${L.judge_model ? " (" + esc(L.judge_model) + ")" : ""}</th></tr></thead>
+    <thead><tr><th>question</th><th>the judge</th><th>the baseline</th>
+      <th>a reader${L.labeller ? ": " + esc(L.labeller) : ""}</th></tr></thead>
     <tbody>
       <tr>
-        <td class="q">who wrote it${split("human")}</td>
-        <td class="n">${personWrote}</td>
-        <td class="n">${pc(w.chance)} <span class="sub">by chance, 1 in
-          ${Math.round(1 / w.chance)}</span></td>
+        <td class="q">who wrote it
+          <span class="sub">six lettered dispositions; pick the one that wrote
+          this critique</span></td>
         <td class="n">${judgeCell(w.judge_accuracy == null ? null :
             pc(w.judge_accuracy) + split("judge"))}</td>
+        <td class="n">${pc(w.chance)} <span class="sub">by chance, 1 in
+          ${Math.round(1 / w.chance)}</span></td>
+        <td class="n">${personWrote}</td>
       </tr>
       <tr>
         <td class="q">recovering the score
           <span class="sub">the number was removed from the critique</span></td>
-        <td class="n">${personScore}</td>
-        <td class="n">MAE ${sc.mean_baseline_mae} <span class="sub">predicting the
-          mean of the ${L.n_items} labelled scores</span></td>
         <td class="n">${judgeCell(sc.judge.spearman == null ? null :
-            "rho " + sc.judge.spearman)}</td>
+            `rho ${sc.judge.spearman} <span class="sub">MAE ${sc.judge.mae}</span>`)}</td>
+        <td class="n">MAE ${sc.mean_baseline_mae} <span class="sub">predicting the
+          mean of these ${L.n_items}</span></td>
+        <td class="n">${personScore}</td>
       </tr>
       <tr>
-        <td class="q">the two readers agree
-          <span class="sub">whether the judge can stand in for a person at all</span></td>
+        <td class="q">the judge agrees with a reader
+          <span class="sub">whether it can stand in for a person at all &mdash;
+          the gate on everything in the row above</span></td>
         <td class="n" colspan="3">${w.kappa == null
           ? `<span class="na">needs both a person and the judge on the same items</span>`
           : `kappa ${w.kappa} on who wrote it, rho ${sc.human_judge_spearman} on the
@@ -1136,40 +1151,70 @@ if (LABELS.length) {
     ? Object.entries(sp).map(([arm, d]) =>
         `${arm} ${d.named_own_influence}/${d.n} (${pc(d.rate)})`).join(", ")
     : null;
+  const m = METHOD || {};
   document.getElementById("label-gloss").innerHTML = `
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">who wrote it</span>
-        <span class="gloss-r">chance ${pc(w.chance)}</span></div>
-      <p>The six critic dispositions are listed, lettered, and the reader picks the
-      one that wrote the critique in front of them. The critic's name and score are
-      removed. ${spLine ? `So is every critic's named influence: ` + spLine + ` of
-      critiques name their own influence by surname and almost none name anyone
-      else's, so left in, the question would be a lookup for "Ruskin" rather than a
-      reading. Whether a critique signposted is kept, and accuracy is reported split
-      by it.` : ""}</p>
+      <div class="gloss-h"><span class="gloss-n">why it is a recovery task and not a rating</span>
+        <span class="gloss-r">the answers are in the log</span></div>
+      <p>The judge is never asked to grade. It is asked to recover two facts the
+      log already holds: which critic wrote a critique, and what number was
+      attached to it. The obvious alternative &mdash; rate this critic's adherence
+      out of five &mdash; has no right answer, so a judge disagreeing with a person
+      would tell you nothing about which of them was right. A forced choice and a
+      number can each be scored against truth, which is the only thing that makes
+      a judge checkable.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">recovering the score</span>
-        <span class="gloss-r">null: MAE ${sc.mean_baseline_mae}</span></div>
-      <p>The critic attached a number from 0.0 to 1.0 and it has been removed; the
-      reader puts it back. There was no rubric in the prompt beyond that one line, so
-      the question is not whether a score is correct &mdash; it is whether the
-      critic's own scale is legible from the critic's own prose. The null is
-      predicting the same number every time: the mean of the ${L.n_items} scores in
-      this set, which gets MAE ${sc.mean_baseline_mae}. Over all 288 critiques in
-      the run it is 0.103.</p>
+      <div class="gloss-h"><span class="gloss-n">why the judge is not a Claude</span>
+        <span class="gloss-r">the agents are Sonnet 4.6</span></div>
+      <p>A Claude judging Sonnet agents shares their priors, so one that identifies
+      dispositions brilliantly may be recognising its own family's habits rather
+      than reading character off the page. An out-of-family model cannot do that.
+      It is the reason the result below can be read as a property of the writing
+      rather than of the family that produced it.</p>
     </div>
     <div class="gloss">
-      <div class="gloss-h"><span class="gloss-n">why a person at all</span>
-        <span class="gloss-r">${L.labelled || 0} of ${L.n_items} labelled${
-          L.labeller ? ", by " + esc(L.labeller) : ""}</span></div>
-      <p>The agents are Sonnet 4.6, so any Claude judging them shares priors with
-      them: a judge that identifies dispositions brilliantly may be recognising its
-      own family's habits rather than reading character off the page. The person is
-      the family-independent reference point. If the judge scores far above a human,
-      that gap is the shared prior and the judged number is not a property of the
-      work &mdash; which is why the judge is not reported until it has been checked
-      against labels on the same items.</p>
+      <div class="gloss-h"><span class="gloss-n">what is hidden from it</span>
+        <span class="gloss-r">name, score, arm, influence</span></div>
+      <p>The critic's name, the score and the arm are stripped. So is every critic's
+      named influence, replaced with <code>${esc(m.redaction || "[name removed]")}</code>:
+      ${spLine ? spLine + " of critiques name their own influence by surname "
+        + "and almost none name anyone else's, so left in, the first question "
+        + "would be a lookup for &ldquo;Ruskin&rdquo; rather than a reading." : ""} The thesis
+      survives the redaction &mdash; a paraphrase of the aura argument is still
+      recognisably one critic and not another &mdash; and recognising the thesis is
+      what adherence means. The six letters are reshuffled for every item so that
+      position carries no signal, and answers are mapped back to critic names before
+      anything is compared.</p>
+    </div>
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">what it is shown, and what it may answer</span>
+        <span class="gloss-r">two calls per critique</span></div>
+      <p>Each question is a separate call, so neither answer can lean on the other,
+      and each reply is a single JSON object: a letter or a number, plus one
+      sentence of reasoning kept so that disagreements can be read rather than
+      guessed at. The prompts, verbatim:</p>
+      ${m.wrote_system ? `<div class="prompt">${esc(m.wrote_system)}</div>` : ""}
+      ${m.score_system ? `<div class="prompt">${esc(m.score_system)}</div>` : ""}
+      ${m.user_block ? `<div class="prompt">${esc(m.user_block)}</div>` : ""}
+    </div>
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">how the sample is drawn</span>
+        <span class="gloss-r">${L.n_items} critiques</span></div>
+      <p>Balanced across both arms and all six critics and deterministic from a
+      seed, so the judge is not validated on feed-exposed prose alone. The arm is
+      hidden, which keeps the same labels usable as a blind comparison if the set is
+      ever grown; at this size it cannot settle one, since two arms and six critics
+      make two per cell. A critique already shown to a reader is never drawn again.</p>
+    </div>
+    <div class="gloss">
+      <div class="gloss-h"><span class="gloss-n">what is still missing</span>
+        <span class="gloss-r">no reader yet</span></div>
+      <p>A judge is not an instrument until it has been checked against a person on
+      the same items, which is the last row of the table and why it is empty. Until
+      someone who did not write the dispositions reads this set, the two figures
+      above are what one model recovered, not what is recoverable. The sheet is
+      drawn and waiting.</p>
     </div>`;
 }
 
@@ -1239,10 +1284,34 @@ def label_sets() -> list[dict]:
     return out
 
 
+def judge_method() -> dict:
+    """The judge's actual prompts and constants, read from judge.py.
+
+    The methodology on the page is the code's own text, not a description of
+    it kept alongside: a prompt edited in judge.py and paraphrased here would
+    leave the page describing an experiment that is no longer being run.
+    """
+    try:
+        import judge
+    except Exception:
+        return {}
+    dispositions = {"A": "…each of the six critic dispositions, in full…"}
+    return {
+        "wrote_system": judge.WROTE_SYSTEM.replace("{key_block}",
+                                                   "A — …\nB — …\n(the six dispositions, in full)"),
+        "score_system": judge.SCORE_SYSTEM.replace("{score_rule}", judge.SCORE_RULE),
+        "user_block": judge.USER_BLOCK,
+        "redaction": judge.REDACTION,
+        "answer_tokens": judge.ANSWER_TOKENS,
+        "default_n": judge.DEFAULT_N,
+    }
+
+
 def render_evals(evals: list[dict]) -> str:
     """The one place the evals page is built, so both call sites stay in step."""
     return (EVAL_PAGE.replace("__EVALS_JSON__", json.dumps(evals))
-                     .replace("__LABELS_JSON__", json.dumps(label_sets())))
+                     .replace("__LABELS_JSON__", json.dumps(label_sets()))
+                     .replace("__METHOD_JSON__", json.dumps(judge_method())))
 
 
 def referenced_figures(runs: list[dict]) -> set[str]:
