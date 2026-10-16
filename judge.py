@@ -561,18 +561,30 @@ NO_LABELLER_CAVEAT = (
     "baseline. Re-score it with --labeller naming who filled it in.")
 
 
+def answer_step(scores: list[float]) -> float:
+    """The grid a rater answered on: 0.1 if every answer is a whole tenth."""
+    for step in (0.1, 0.05, 0.01):
+        if all(abs(v / step - round(v / step)) < 1e-9 for v in scores):
+            return step
+    return 0.0
+
+
 def looks_copied(items: list[Item], scores: dict[str, float]) -> dict:
-    """Do these score labels look like the answer key rather than a reading?
+    """Do these score labels reproduce the hidden number rather than estimate it?
 
-    The first draw kept the answers in a file beside the sheet and the labels
-    came back at rho 0.95 — with 22 of 25 answers landing exactly on the truth
-    rounded to a tenth and 4 rank inversions in 300 pairs. No reading of prose
-    produces that, and a flat correlation would not have revealed it.
+    An earlier version of this asked whether answers sat on the truth's own
+    rounding grid, and flagged a set at 80%. That test was wrong. gpt-5.5 never
+    sees the scores — they are not in its prompt — and its answers, rounded to
+    tenths, sit on the truth's tenth 84% of the time with a 1.7% inversion
+    rate. The test was measuring "answered in tenths and was accurate", which
+    is what a good reader looks like.
 
-    So the signature is checked rather than trusted: answers sitting on the
-    truth's own rounding grid, and an ordering too clean for an estimate. This
-    is a diagnostic, not a verdict on anyone — a genuinely excellent reader
-    would trip it, which is why it reports the numbers it is reasoning from.
+    So the flag now fires only on what cannot be a reading: a rater who answers
+    more finely than a tenth AND reproduces the hidden number exactly. Nobody
+    estimates prose to a hundredth and lands on it. At tenth precision a
+    copier and an excellent reader are genuinely not separable at this sample
+    size, and the honest report of that is `separable: false` rather than an
+    accusation — the diagnostics are returned either way so a person can look.
     """
     if len(scores) < 10:
         return {}
@@ -580,16 +592,18 @@ def looks_copied(items: list[Item], scores: dict[str, float]) -> dict:
     ids = sorted(scores)
     truth = [by_id[i].score for i in ids]
     said = [scores[i] for i in ids]
-    on_grid = np.mean([round(s, 2) in (round(round(t, 1), 2),
-                                       round(np.ceil(t * 10) / 10, 2))
-                       for s, t in zip(said, truth)])
+    step = answer_step(said)
+    exact = float(np.mean([abs(s - t) < 1e-9 for s, t in zip(said, truth)]))
     pairs = [(a, b) for a in range(len(ids)) for b in range(a + 1, len(ids))]
     inversions = sum(1 for a, b in pairs
                      if (truth[a] - truth[b]) * (said[a] - said[b]) < 0)
     rate = inversions / len(pairs) if pairs else None
-    return {"on_rounding_grid": round(float(on_grid), 3),
+    separable = step < 0.1          # answered finer than a tenth
+    return {"answer_step": step,
+            "exact_match": round(exact, 3),
             "inversion_rate": round(rate, 4) if rate is not None else None,
-            "flag": bool(on_grid >= 0.6 and rate is not None and rate < 0.05)}
+            "separable": separable,
+            "flag": bool(separable and exact >= 0.5)}
 
 
 def verdict(value, key: str) -> str:
@@ -701,15 +715,21 @@ def score_labels(items: list[Item], human: dict, judge: dict,
     out["caveats"] = [PROVENANCE_CAVEAT]
     if not labeller:
         out["caveats"].insert(0, NO_LABELLER_CAVEAT)
-    if out["score"]["human_looks_copied"].get("flag"):
+    copied = out["score"]["human_looks_copied"]
+    if copied.get("flag"):
         out["caveats"].append(
-            "These score labels are not usable. "
-            f"{out['score']['human_looks_copied']['on_rounding_grid']:.0%} of them "
-            "sit exactly on the real score's rounding grid with an inversion rate of "
-            f"{out['score']['human_looks_copied']['inversion_rate']:.1%}, which is "
-            "the signature of the answer key rather than a reading of the prose. "
-            "The sample this set was drawn from kept the answers in a plaintext "
-            "file beside the sheet; later sets separate them.")
+            "These score labels are not usable: "
+            f"{copied['exact_match']:.0%} of them reproduce the hidden score "
+            "exactly, at a precision finer than a tenth. Nobody estimates prose "
+            "to a hundredth and lands on it, so these are the answer key rather "
+            "than a reading.")
+    elif copied and not copied.get("separable"):
+        out["caveats"].append(
+            "These scores were given in whole tenths, and at that precision an "
+            "accurate reader and a copied answer key look the same: gpt-5.5, "
+            "which never sees the scores, lands on the truth's own tenth 84% of "
+            "the time. Nothing here can distinguish them, which is a limit of "
+            "the check and not a suspicion about the reader.")
 
     # The decision the labels exist to support, in the order it has to be made:
     # is the judge usable, and only then, what does it find.
@@ -732,8 +752,8 @@ def score_labels(items: list[Item], human: dict, judge: dict,
          "verdict": verdict(w["judge_accuracy"], "disposition_adherence")},
         {"check": "the score is legible from the prose", "group": "judged",
          "value": s["judge"]["spearman"], "key": "score_legible",
-         "detail": ("the human labels for this set look copied from the answer "
-                    "key — no verdict"
+         "detail": ("the labels for this set reproduce the hidden score exactly "
+                    "— no verdict"
                     if s["human_looks_copied"].get("flag") else
                     f"judge rho {s['judge']['spearman']}, human rho "
                     f"{s['human']['spearman']}, MAE {s['judge']['mae']} vs "

@@ -490,23 +490,34 @@ def test_used_fingerprints_is_empty_when_nothing_has_been_labelled(tmp_path, mon
 
 
 # --- the copied-labels check --------------------------------------------------
-def test_looks_copied_trips_on_the_answer_key_rounded():
+def test_looks_copied_trips_on_an_exact_reproduction_of_the_key():
     items = build(20)
-    copied = {it.item_id: round(it.score, 1) for it in items}
-    out = judge.looks_copied(items, copied)
+    out = judge.looks_copied(items, {it.item_id: it.score for it in items})
     assert out["flag"] is True
-    assert out["on_rounding_grid"] >= 0.6
-    assert out["inversion_rate"] == 0.0
+    assert out["exact_match"] == 1.0
+
+
+def test_tenths_cannot_be_separated_and_the_check_says_so():
+    """The regression this check exists for. An earlier version flagged answers
+    sitting on the truth's rounding grid, and gpt-5.5 — which never sees the
+    scores — does that 84% of the time once rounded to tenths. At tenth
+    precision a copier and an accurate reader are the same thing to this test,
+    and saying so is the honest output, not an accusation."""
+    items = build(20)
+    out = judge.looks_copied(items, {it.item_id: round(it.score, 1) for it in items})
+    assert out["separable"] is False
+    assert out["flag"] is False
 
 
 def test_looks_copied_leaves_a_plausible_reader_alone():
-    """Good but noisy estimates off the truth's own grid must not be flagged."""
     import random
     rng = random.Random(7)
     items = build(20)
-    read = {it.item_id: min(1.0, max(0.0, it.score + rng.uniform(-0.12, 0.12)))
+    read = {it.item_id: round(min(1.0, max(0.0, it.score + rng.uniform(-0.12, 0.12))), 2)
             for it in items}
-    assert judge.looks_copied(items, read)["flag"] is False
+    out = judge.looks_copied(items, read)
+    assert out["separable"] is True      # answered finer than a tenth
+    assert out["flag"] is False          # but does not reproduce the key
 
 
 def test_looks_copied_says_nothing_on_a_sample_too_small_to_read():
@@ -514,18 +525,31 @@ def test_looks_copied_says_nothing_on_a_sample_too_small_to_read():
     assert judge.looks_copied(items, {i.item_id: i.score for i in items}) == {}
 
 
+def test_answer_step_reads_the_grid_a_rater_used():
+    assert judge.answer_step([0.1, 0.5, 0.9]) == 0.1
+    assert judge.answer_step([0.15, 0.5]) == 0.05
+    assert judge.answer_step([0.12, 0.5]) == 0.01
+
+
 def test_a_flagged_set_withholds_the_score_finding_but_keeps_attribution():
     items = build(20)
     key = key_for(sorted(DISPOSITIONS))
     letter = {name: l for l, name in key.items()}
-    human = {it.item_id: {"wrote": letter[it.critic], "score": round(it.score, 1)}
+    human = {it.item_id: {"wrote": letter[it.critic], "score": it.score}
              for it in items}
     out = score_labels(items, human, {}, key)
     rows = {r["check"]: r for r in out["criteria"]}
     assert rows["the score is legible from the prose"]["verdict"] == "insufficient"
-    assert "copied" in rows["the score is legible from the prose"]["detail"]
     assert out["wrote"]["human_accuracy"] == 1.0          # attribution survives
     assert any("not usable" in c for c in out["caveats"])
+
+
+def test_a_set_answered_in_tenths_carries_the_limit_as_a_caveat():
+    items = build(20)
+    human = {it.item_id: {"wrote": None, "score": round(it.score, 1)} for it in items}
+    out = score_labels(items, human, {}, key_for(sorted(DISPOSITIONS)))
+    assert not out["score"]["human_looks_copied"]["flag"]
+    assert any("look the same" in c for c in out["caveats"])
 
 
 def test_every_result_carries_the_provenance_caveat():

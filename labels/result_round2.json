@@ -1,0 +1,106 @@
+{
+  "n_items": 25,
+  "labeller": null,
+  "wrote": {
+    "n_human": 0,
+    "n_judge": 25,
+    "n_both": 0,
+    "chance": 0.167,
+    "human_accuracy": null,
+    "judge_accuracy": 0.88,
+    "agree_rate": null,
+    "kappa": null,
+    "by_signposting": {
+      "judge": {
+        "signposted": 0.818,
+        "never_named": 0.929
+      }
+    },
+    "disagreements": []
+  },
+  "score": {
+    "mean_baseline_mae": 0.107,
+    "human": {
+      "n": 0,
+      "mae": null,
+      "spearman": null,
+      "p_value": null
+    },
+    "judge": {
+      "n": 25,
+      "mae": 0.063,
+      "spearman": 0.908,
+      "p_value": 0.0
+    },
+    "n_both": 0,
+    "human_judge_spearman": null,
+    "human_looks_copied": {},
+    "judge_looks_copied": {
+      "answer_step": 0.01,
+      "exact_match": 0.08,
+      "inversion_rate": 0.08,
+      "separable": true,
+      "flag": false
+    }
+  },
+  "caveats": [
+    "No labeller is recorded for this set, so nothing here can be read as a human baseline. Re-score it with --labeller naming who filled it in.",
+    "Who filled in a set decides what its numbers mean. A labeller who wrote the dispositions is an upper bound set by their author rather than a reading by an arms-length critic, and a sheet completed by a language model is not a human baseline at all \u2014 it is a second judge, and one whose prompt was not recorded. Pass --labeller when scoring so the set says which it was."
+  ],
+  "criteria": [
+    {
+      "check": "judge agrees with the human on who wrote it",
+      "group": "judge",
+      "value": null,
+      "key": "judge_agrees_wrote",
+      "detail": "only 0 items labelled by both",
+      "verdict": "insufficient"
+    },
+    {
+      "check": "judge agrees with the human on the score",
+      "group": "judge",
+      "value": null,
+      "key": "judge_agrees_score",
+      "detail": "only 0 items scored by both",
+      "verdict": "insufficient"
+    },
+    {
+      "check": "critics write their disposition",
+      "group": "judged",
+      "value": 0.88,
+      "key": "disposition_adherence",
+      "detail": "judge 0.88, human None, chance 0.167",
+      "verdict": "pass"
+    },
+    {
+      "check": "the score is legible from the prose",
+      "group": "judged",
+      "value": 0.908,
+      "key": "score_legible",
+      "detail": "judge rho 0.908, human rho None, MAE 0.063 vs 0.107 for predicting the mean",
+      "verdict": "pass"
+    }
+  ],
+  "signposting": {
+    "feed": {
+      "n": 288,
+      "named_own_influence": 128,
+      "rate": 0.444
+    },
+    "isolated": {
+      "n": 288,
+      "named_own_influence": 130,
+      "rate": 0.451
+    }
+  },
+  "set_id": "round2",
+  "logs": {
+    "feed": "run_20260910_154044.jsonl",
+    "isolated": "control_run_20260910_154044_20260910_160642.jsonl"
+  },
+  "judge_model": "gpt-5.5-2026-04-23",
+  "judges_available": [
+    "gpt-5.5-2026-04-23"
+  ],
+  "labelled": 0
+}

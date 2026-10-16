@@ -377,19 +377,23 @@ Labels and judge answers live in `labels/` and are committed: one costs a
 person's attention and the other costs money, so neither belongs with the
 derived figures.
 
-No labels yet. The first sheet was filled in by a chat assistant rather than by
-hand, which makes it a second judge — and one whose prompt was not recorded —
-not a human baseline, so the set was discarded rather than reported. Its score
-answers had also come back at rho 0.95, with 80% sitting exactly on the real
-score's rounding grid; the answers had been written into a plaintext file beside
-the sheet, which is the answer key next to the exam.
+No human labels yet. The first sheet was filled in by a chat assistant rather
+than by hand, which makes it a second judge — and one whose prompt was not
+recorded — not a human baseline, so the set was discarded.
 
-Three things changed as a result. Questions and answers now live in separate
-files with the answers base64'd — a blindfold rather than a secret, so looking
-has to be deliberate. A fresh draw skips every critique already shown to a
-rater. And `looks_copied()` checks that signature on every set from now on,
-because a flat correlation would have revealed nothing: rho 0.95 looked like a
-triumph.
+I also claimed at the time that its score answers were statistically detectable
+as copied from the answer key: 80% of them sat on the real score's rounding
+grid. That claim was wrong, and the out-of-family judge is what disproved it.
+gpt-5.5 never sees the scores, and its answers rounded to tenths sit on the
+truth's own tenth 84% of the time with a 1.7% inversion rate. The test was
+measuring "answered in tenths and was accurate", which is what a good reader
+looks like. `looks_copied()` now fires only on what cannot be a reading — a
+rater answering more finely than a tenth who reproduces the hidden number
+exactly — and reports `separable: false` for answers given in whole tenths,
+because at that precision a copier and an excellent reader are the same thing
+to any test this sample can support. The answers are still kept in a separate
+base64 file beside the questions, since the cheap fix for a leak is not to
+leak.
 
 `--labeller` is recorded with every result and prints with the numbers, and a
 set that does not name one says so where its figures would go. Who filled in a

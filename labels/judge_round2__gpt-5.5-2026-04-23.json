@@ -1,0 +1,257 @@
+{
+  "set_id": "round2",
+  "model": "gpt-5.5-2026-04-23",
+  "provider": "openai",
+  "answers": {
+    "i01": {
+      "wrote": {
+        "why": "The critique foregrounds craftsmanship, conceptual rigor, earned editorial choices, sincerity, and skepticism toward decorative melancholy or unjustified historical framing, matching critic B\u2019s Ruskin-inspired disposition.",
+        "wrote": "evelyn_hart"
+      },
+      "score": {
+        "why": "The critique is strongly admiring, calling it the round's most genuinely crafted concept and praising its precision and embodiment, with only limited reservations about the final image and historical date.",
+        "score": 0.91
+      }
+    },
+    "i02": {
+      "score": {
+        "why": "The critique is strongly negative, framing the piece as evasive, over-aphoristic, and vague compared with a more successful predecessor, while leaving only slight room for its ambition.",
+        "score": 0.32
+      },
+      "wrote": {
+        "why": "The critique judges the piece through its formal precision, bodily/sensory effects, and distrust of aphoristic explanatory language, matching the Sontag-inspired critic\u2019s emphasis on what the work actually makes felt rather than what it claims to mean.",
+        "wrote": "clara_bennett"
+      }
+    },
+    "i03": {
+      "wrote": {
+        "why": "The critique reads the shirt as a layered cultural text, emphasizing inscription, codes, collective authorship, ambiguity, and explicitly Barthesian symbolism.",
+        "wrote": "lena_voss"
+      },
+      "score": {
+        "why": "The critique is strongly admiring, calling the work precise, structurally discovered, and emotionally resonant, with only a modest reservation about the ending\u2019s privatizing gesture.",
+        "score": 0.88
+      }
+    },
+    "i04": {
+      "wrote": {
+        "why": "The critique foregrounds craft, sincerity, disciplined execution, and whether the work reveals a genuine contemporary emotional condition, while faulting an inherited gesture as unnecessary.",
+        "wrote": "evelyn_hart"
+      },
+      "score": {
+        "why": "The critique is strongly admiring of the work\u2019s emotional clarity, formal precision, and central autocorrect gesture, with only one notable reservation about the looping cursor ending.",
+        "score": 0.88
+      }
+    },
+    "i05": {
+      "wrote": {
+        "why": "The critique judges the work by its actual conditions of installation, maintenance, duration, institutional labor, and the consequences once the concept is materially realized, especially its dependence on an uncontrollable death.",
+        "wrote": "ines_marchetti"
+      },
+      "score": {
+        "why": "The critique finds the piece conceptually sharp in one key respect but largely compromised by ethical and institutional contradictions.",
+        "score": 0.56
+      }
+    },
+    "i06": {
+      "wrote": {
+        "why": "The critique stays close to the work\u2019s formal effects, language, restraint, and sensory-conceptual impact while objecting to explanatory or falsely open gestures, matching the Sontag-like emphasis on the work itself over interpretation.",
+        "wrote": "clara_bennett"
+      },
+      "score": {
+        "why": "The critic finds the core conceit formally strong and Park's best, with only a couple of textual overextensions weakening an otherwise successful compressed piece.",
+        "score": 0.78
+      }
+    },
+    "i07": {
+      "wrote": {
+        "why": "The critique emphasizes the work\u2019s formal and material power while objecting to explanatory wage figures and captions that over-instruct the viewer, matching Sontag\u2019s preference for close attention over interpretation.",
+        "wrote": "clara_bennett"
+      },
+      "score": {
+        "why": "The critique is strongly approving and frames the piece as Reyes's cleanest, most disciplined, and most precisely withheld work yet, with a significant but contained reservation about the wage figures being too explicit.",
+        "score": 0.84
+      }
+    },
+    "i08": {
+      "score": {
+        "why": "The critique is overwhelmingly admiring, calling it the studio\u2019s most fully realized proposal and nearly perfect, with only one small naming-related reservation.",
+        "score": 0.94
+      },
+      "wrote": {
+        "why": "The critique attends closely to the work\u2019s formal and material qualities, praises its restraint and sensory/documentary force, and objects when the phrase \u201cfield guide for grief\u201d over-interprets what the material already holds open.",
+        "wrote": "clara_bennett"
+      }
+    },
+    "i09": {
+      "wrote": {
+        "why": "The critique centers on whether the concept can actually be realized in a gallery\u2014materials, fabrication, staging, public access, lighting, vitrines, and the practical limits where curatorial work begins.",
+        "wrote": "ines_marchetti"
+      },
+      "score": {
+        "why": "The critic finds the central letter concept highly specific, executable, and even brilliant, but marks it down for an unresolved and impractical staging premise.",
+        "score": 0.78
+      }
+    },
+    "i10": {
+      "wrote": {
+        "why": "The critique centers on aura, handmade singularity, reproducibility, and technological-cultural context, explicitly framing the work through a Benjaminian lens.",
+        "wrote": "marcus_ivey"
+      },
+      "score": {
+        "why": "The critique is strongly admiring of the work\u2019s disciplined reduction and conceptual clarity, with only a contained reservation about possible mystification that the critic says the piece ultimately avoids.",
+        "score": 0.86
+      }
+    },
+    "i11": {
+      "wrote": {
+        "why": "The critique emphasizes conceptual rigor, sincerity, execution, and skepticism toward superficial affirmation or trend-like self-help gestures, while valuing moments that genuinely confront contemporary experience.",
+        "wrote": "evelyn_hart"
+      },
+      "score": {
+        "why": "The critique finds the premise philosophically interesting and notes one effective unsettling gesture, but largely dismisses the work as underdeveloped, overly self-help-like, and conceptually unpressured.",
+        "score": 0.32
+      }
+    },
+    "i12": {
+      "wrote": {
+        "why": "The critique explicitly invokes a Baudelairean sense of beauty and judges the work through modern contingency, emotional/social resonance, ambiguity, and the way it provokes new perception.",
+        "wrote": "julian_moreau"
+      },
+      "score": {
+        "why": "The critique is strongly admiring, calling the work Park's most precise and beautiful yet, with only a slight reservation about one narrowing clause.",
+        "score": 0.92
+      }
+    },
+    "i13": {
+      "wrote": {
+        "why": "The critique centers on semiotic gestures, mythic meanings, photography as index, and explicitly Barthesian ideas of presence, absence, and signification.",
+        "wrote": "lena_voss"
+      },
+      "score": {
+        "why": "The critique is overwhelmingly admiring, calling the work formally ruthless, radical, devastating, and among Nakamura's finest, with only one minor unresolved tension noted.",
+        "score": 0.94
+      }
+    },
+    "i14": {
+      "wrote": {
+        "why": "The critique judges the work through its material sequence, installation conditions, conservation limits, and what happens when the concept is actually placed in a gallery rather than left as an idea.",
+        "wrote": "ines_marchetti"
+      },
+      "score": {
+        "why": "The critic treats the work as a highly coherent and earned culmination with strong formal logic, while holding back for serious conservation/perceptual instability and an over-explanatory closing statement.",
+        "score": 0.88
+      }
+    },
+    "i15": {
+      "wrote": {
+        "why": "The critique explicitly frames the Olivetti through Benjaminian concerns of reproduction, aura, technological mediation, and the cultural meaning of mechanical marks.",
+        "wrote": "marcus_ivey"
+      },
+      "score": {
+        "why": "The critique is overwhelmingly admiring, calling the piece Ellis\u2019s most precise and structurally earned work, with only one reservation about the final sentence over-explaining the concept.",
+        "score": 0.91
+      }
+    },
+    "i16": {
+      "wrote": {
+        "why": "The critique centers on language, signs, mythology, substitution, translation, and symbolic over-explanation, all characteristic of the Barthes-inspired critic.",
+        "wrote": "lena_voss"
+      },
+      "score": {
+        "why": "The critique is strongly positive about the proposal\u2019s formal confidence, central mechanisms, breathing motif, and blank wall, while reserving points for over-explanation and some aestheticizing risks.",
+        "score": 0.84
+      }
+    },
+    "i17": {
+      "wrote": {
+        "why": "The critique evaluates the proposal as something to be physically realized in space, emphasizing scale, logistics, sequence, duration, feasibility, and whether its conceptual strength survives actual execution.",
+        "wrote": "ines_marchetti"
+      },
+      "score": {
+        "why": "The critique is strongly positive, calling the proposal a logical and brave formal conclusion with achievable constraints, with only a minor reservation about one over-explanatory sentence.",
+        "score": 0.88
+      }
+    },
+    "i18": {
+      "wrote": {
+        "why": "The critique frames the painting through reproducibility, screens, image economies, and Benjaminian distracted reception, challenging a purely aesthetic reading.",
+        "wrote": "marcus_ivey"
+      },
+      "score": {
+        "why": "The critique is strongly admiring of the work's rigor, radical irreproducibility, beauty, and conceptual strength, while withholding a higher score for its perceived elitist framing of inattentive viewers.",
+        "score": 0.84
+      }
+    },
+    "i19": {
+      "wrote": {
+        "why": "The critique explicitly frames the work through Baudelairean modernity, contradiction, sensation versus simulation, and the emotional-cultural force of making solitude tactile.",
+        "wrote": "julian_moreau"
+      },
+      "score": {
+        "why": "The critique finds a genuinely strong core and one exceptional sentence in the stone ritual, but marks it down for explanatory aphorism and overdetermined prose that weakens the experience.",
+        "score": 0.72
+      }
+    },
+    "i20": {
+      "wrote": {
+        "why": "The critique foregrounds whether the concept can actually be produced\u2014radar sourcing, timing, archives, shoot coordination, and the instruction to 'Build it'\u2014while judging how the work changes once its material and procedural limits are met.",
+        "wrote": "ines_marchetti"
+      },
+      "score": {
+        "why": "The critic sees a materially strong, buildable concept with a genuinely intelligent radar/data collision, but marks it down for the explanatory final sentence that weakens its restraint.",
+        "score": 0.82
+      }
+    },
+    "i21": {
+      "wrote": {
+        "why": "The critique emphasizes material necessity, craftsmanship, formal rigor, sincerity of error, and objects to sentimental overreach, matching the Ruskin-inspired critic\u2019s concern with execution and genuine weight.",
+        "wrote": "evelyn_hart"
+      },
+      "score": {
+        "why": "The critic strongly admires the material choices and central formal gestures but marks the work down for final sentences that over-explain and sentimentalize an otherwise precise concept.",
+        "score": 0.78
+      }
+    },
+    "i22": {
+      "wrote": {
+        "why": "The critique frames the work through Benjamin\u2019s civilization/barbarism thesis and focuses on medium, reproducibility, circulation, ideology, and the analog document\u2019s relation to historical violence.",
+        "wrote": "marcus_ivey"
+      },
+      "score": {
+        "why": "The critique is strongly admiring of the concept's rigor, intimacy, and crossed-out text device, while holding back for its possible nostalgia and aestheticized historical preciousness.",
+        "score": 0.82
+      }
+    },
+    "i23": {
+      "wrote": {
+        "why": "The critique centers on semiotics, mythology, untranslatability, reader-authority, and competing cultural codes, all hallmarks of the Barthes-inspired critic.",
+        "wrote": "lena_voss"
+      },
+      "score": {
+        "why": "The critique is strongly admiring, emphasizing rigor, ambition, and devastating formal choices, with only limited reservations about over-engineering and emotional legibility.",
+        "score": 0.9
+      }
+    },
+    "i24": {
+      "wrote": {
+        "why": "The critique prioritizes the work\u2019s formal restraint and material presence while objecting that its explanatory language names the emotional meaning too directly, a distinctly Sontag-like suspicion of interpretation overwhelming the object.",
+        "wrote": "clara_bennett"
+      },
+      "score": {
+        "why": "The critique finds the concept thoughtful and formally strong in places, especially the participatory notebook, but marks it down for over-explaining its emotional logic and leaving the vitrine/participation tension unresolved.",
+        "score": 0.68
+      }
+    },
+    "i25": {
+      "wrote": {
+        "why": "The critique emphasizes craftsmanship, sincerity, formal resolution, honest material choices, and the work\u2019s genuine engagement with displacement rather than treating its objects as superficial symbols.",
+        "wrote": "evelyn_hart"
+      },
+      "score": {
+        "why": "The critique is nearly unreserved praise, emphasizing formal resolution, spatial honesty, exactness of structure, and emotionally restrained completeness.",
+        "score": 0.94
+      }
+    }
+  }
+}
