@@ -356,26 +356,27 @@ Labels and judge answers live in `labels/` and are committed: one costs a
 person's attention and the other costs money, so neither belongs with the
 derived figures.
 
-The first set of labels is in, and needs another eye. 23 of 25 attributions
-were right against 17% by chance — 100% where the critique had named its
-influence before redaction, 83% where it never named anyone, and the two misses
-are a mutual Sontag/Ruskin swap, which is the confusion a reader makes and not
-noise. **But the only labeller so far wrote the dispositions being identified.**
-That makes 92% an upper bound set by the roster's author, not evidence that a
-reader can tell these critics apart, and the number is not worth reporting as
-the latter until someone who did not write the roster has read a set. Every
-result file carries that caveat with it, because a number read six months later
-will not remember who produced it.
+No labels yet. The first sheet was filled in by a chat assistant rather than by
+hand, which makes it a second judge — and one whose prompt was not recorded —
+not a human baseline, so the set was discarded rather than reported. Its score
+answers had also come back at rho 0.95, with 80% sitting exactly on the real
+score's rounding grid; the answers had been written into a plaintext file beside
+the sheet, which is the answer key next to the exam.
 
-The score labels from that set were thrown away, and the reason is worth
-recording. They came back at rho 0.95, which was too good: 80% of them sat
-exactly on the real score's rounding grid with an inversion rate of 1.3%, and no
-reading of prose does that. The answers had been written into a plaintext file
-beside the sheet — the answer key next to the exam. Questions and answers are
-now separate files with the answers base64'd, a blindfold rather than a secret
-so that looking has to be deliberate; a fresh draw skips every critique already
-shown to a rater; and the signature itself is checked on every set from now on,
-since a flat correlation would never have revealed it.
+Three things changed as a result. Questions and answers now live in separate
+files with the answers base64'd — a blindfold rather than a secret, so looking
+has to be deliberate. A fresh draw skips every critique already shown to a
+rater. And `looks_copied()` checks that signature on every set from now on,
+because a flat correlation would have revealed nothing: rho 0.95 looked like a
+triumph.
+
+`--labeller` is recorded with every result and prints with the numbers, and a
+set that does not name one says so where its figures would go. Who filled in a
+sheet decides what its numbers mean: the roster's author is an upper bound
+rather than an arms-length reading, and a model is a judge rather than a
+baseline. `labels/sheet_round2.md` is drawn and waiting — 25 critiques, no
+overlap with the discarded set, balanced across both arms and all six critics.
+
 
 ## Setup
 

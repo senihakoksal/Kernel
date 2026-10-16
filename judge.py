@@ -487,13 +487,18 @@ async def run_judge(items: list[Item], dispositions: dict[str, str], model: str,
 
 # --- scoring ------------------------------------------------------------------
 # Travels with every result, because a number read six months later will not
-# remember who produced it.
-AUTHOR_CAVEAT = (
-    "The only labeller so far also wrote the dispositions being identified, so "
-    "the human accuracy is an upper bound set by the roster's author rather than "
-    "a reading by an arms-length critic. Replication by someone who did not "
-    "write the dispositions is outstanding, and until then this is not evidence "
-    "that a reader can tell these critics apart.")
+# remember who produced it — and the first set proved that the hard way: it was
+# filled in by a chat assistant rather than by hand, which makes 92% on
+# attribution not a human baseline at all. The set was discarded.
+PROVENANCE_CAVEAT = (
+    "Who filled in a set decides what its numbers mean. A labeller who wrote the "
+    "dispositions is an upper bound set by their author rather than a reading by "
+    "an arms-length critic, and a sheet completed by a language model is not a "
+    "human baseline at all — it is a second judge, and one whose prompt was not "
+    "recorded. Pass --labeller when scoring so the set says which it was.")
+NO_LABELLER_CAVEAT = (
+    "No labeller is recorded for this set, so nothing here can be read as a human "
+    "baseline. Re-score it with --labeller naming who filled it in.")
 
 
 def looks_copied(items: list[Item], scores: dict[str, float]) -> dict:
@@ -535,7 +540,7 @@ def verdict(value, key: str) -> str:
 
 
 def score_labels(items: list[Item], human: dict, judge: dict,
-                 key: dict[str, str]) -> dict:
+                 key: dict[str, str], labeller: str | None = None) -> dict:
     """Human, judge and truth, scored against each other on the same items.
 
     `key` maps the sheet's letters to critic names. The human answers in
@@ -545,7 +550,7 @@ def score_labels(items: list[Item], human: dict, judge: dict,
     """
     from sklearn.metrics import cohen_kappa_score
     by_id = {it.item_id: it for it in items}
-    out: dict = {"n_items": len(items)}
+    out: dict = {"n_items": len(items), "labeller": labeller}
     # Answers for items outside the sample are dropped rather than crashed on:
     # an edited sheet or a judge file from an older draw should narrow the set
     # the agreement is computed over, not take the tool down.
@@ -633,7 +638,9 @@ def score_labels(items: list[Item], human: dict, judge: dict,
         "human_looks_copied": looks_copied(items, hs),
         "judge_looks_copied": looks_copied(items, js),
     }
-    out["caveats"] = [AUTHOR_CAVEAT]
+    out["caveats"] = [PROVENANCE_CAVEAT]
+    if not labeller:
+        out["caveats"].insert(0, NO_LABELLER_CAVEAT)
     if out["score"]["human_looks_copied"].get("flag"):
         out["caveats"].append(
             "These score labels are not usable. "
@@ -801,11 +808,21 @@ def main() -> None:
                     help="label set id (default: the paired run's stem)")
     ap.add_argument("--n", type=int, default=DEFAULT_N)
     ap.add_argument("--judge-model", default=JUDGE_MODEL)
+    ap.add_argument("--labeller", default=None,
+                    help="who filled in the sheet, e.g. \"a practising critic, "
+                         "no involvement in the project\" — recorded with the result")
     ap.add_argument("--confirm", action="store_true",
                     help="required by `run`: yes, spend money on API calls")
     ap.add_argument("--price-in", type=float, default=None)
     ap.add_argument("--price-out", type=float, default=None)
     args = ap.parse_args()
+
+    # The money guard comes before every other check. Behind them, `run` without
+    # --confirm can exit complaining about a missing sample, which tells the
+    # caller nothing about the thing that actually needed confirming.
+    if args.command == "run" and not args.confirm:
+        sys.exit("`run` makes paid API calls. Re-run with --confirm when you "
+                 "mean it, or use `estimate` first.")
 
     LABEL_DIR.mkdir(exist_ok=True)
     logs = default_pair()
@@ -876,9 +893,6 @@ def main() -> None:
         return
 
     if args.command == "run":
-        if not args.confirm:
-            sys.exit("`run` makes paid API calls. Re-run with --confirm when you "
-                     "mean it, or use `estimate` first.")
         print(f"  judging {len(items)} items with {args.judge_model}")
         answers = asyncio.run(run_judge(items, dispositions, args.judge_model))
         errors = [(i, t, a[t]["error"]) for i, a in answers.items()
@@ -902,7 +916,7 @@ def main() -> None:
              if p["judge"].exists() else {})
     if not judge:
         print(f"  no judge answers yet ({p['judge']}) — human labels only")
-    result = score_labels(items, human, judge, key)
+    result = score_labels(items, human, judge, key, args.labeller)
     result["signposting"] = signposting
     # Which run and which arms these labels came from. Recorded with the result
     # so the page can attribute a label set without re-deriving it from a
@@ -916,6 +930,7 @@ def main() -> None:
     p["result"].write_text(json.dumps(result, indent=2) + "\n")
 
     w, s = result["wrote"], result["score"]
+    print(f"\n  labelled by: {result.get('labeller') or 'NOT RECORDED'}")
     print(f"\n  WHO WROTE IT — chance {w['chance']}")
     print(f"    human {w['human_accuracy']} (n={w['n_human']})   "
           f"judge {w['judge_accuracy']} (n={w['n_judge']})")

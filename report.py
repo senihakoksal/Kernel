@@ -1096,7 +1096,9 @@ if (LABELS.length) {
     ? `<span class="na">not run</span>` : v;
 
   document.getElementById("labels").innerHTML = `
-    <thead><tr><th>question</th><th>a person</th><th>the baseline</th>
+    <thead><tr><th>question</th><th>${L.labeller ? esc(L.labeller)
+        : '<span class="withheld">labeller not recorded</span>'}</th>
+      <th>the baseline</th>
       <th>the judge${L.judge_model ? " (" + esc(L.judge_model) + ")" : ""}</th></tr></thead>
     <tbody>
       <tr>
@@ -1159,7 +1161,8 @@ if (LABELS.length) {
     </div>
     <div class="gloss">
       <div class="gloss-h"><span class="gloss-n">why a person at all</span>
-        <span class="gloss-r">${L.labelled || 0} of ${L.n_items} labelled</span></div>
+        <span class="gloss-r">${L.labelled || 0} of ${L.n_items} labelled${
+          L.labeller ? ", by " + esc(L.labeller) : ""}</span></div>
       <p>The agents are Sonnet 4.6, so any Claude judging them shares priors with
       them: a judge that identifies dispositions brilliantly may be recognising its
       own family's habits rather than reading character off the page. The person is

@@ -526,6 +526,33 @@ def test_a_flagged_set_withholds_the_score_finding_but_keeps_attribution():
     assert any("not usable" in c for c in out["caveats"])
 
 
-def test_every_result_carries_the_author_caveat():
+def test_every_result_carries_the_provenance_caveat():
     out = score_labels(build(6), {}, {}, key_for(sorted(DISPOSITIONS)))
-    assert judge.AUTHOR_CAVEAT in out["caveats"]
+    assert judge.PROVENANCE_CAVEAT in out["caveats"]
+
+
+def test_a_set_with_no_recorded_labeller_says_so_first():
+    """An unattributed set is not a human baseline, and the page should not be
+    able to present it as one."""
+    out = score_labels(build(6), {}, {}, key_for(sorted(DISPOSITIONS)))
+    assert out["labeller"] is None
+    assert out["caveats"][0] == judge.NO_LABELLER_CAVEAT
+
+
+def test_a_recorded_labeller_travels_with_the_result():
+    out = score_labels(build(6), {}, {}, key_for(sorted(DISPOSITIONS)),
+                       labeller="a practising critic, no involvement")
+    assert out["labeller"] == "a practising critic, no involvement"
+    assert judge.NO_LABELLER_CAVEAT not in out["caveats"]
+
+
+def test_the_money_guard_fires_before_any_other_check():
+    """With no sample on disk, `run` must still refuse for the right reason —
+    otherwise it exits complaining about a missing file and the caller learns
+    nothing about what needed confirming."""
+    repo = Path(__file__).resolve().parents[1]
+    done = subprocess.run([sys.executable, "judge.py", "run", "--set", "nosuchset"],
+                          cwd=repo, capture_output=True, text=True)
+    assert done.returncode != 0
+    assert "--confirm" in done.stderr
+    assert "No sample" not in done.stderr
